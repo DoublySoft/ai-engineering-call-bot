@@ -1,0 +1,40 @@
+# Postgres for the lab. The API and web apps normally run on the host
+# (uv / pnpm); the `full` profile also runs the API inside the Docker network.
+name: ${COMPOSE_PROJECT_NAME:-voice-ai-lab}
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    ports:
+      # Bound to loopback only. Override POSTGRES_HOST_PORT in .env to avoid clashes.
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-55432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-voice_ai_lab}
+      POSTGRES_USER: ${POSTGRES_USER:-voice_ai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    profiles: ["full"]
+    build:
+      context: ./apps/api
+      dockerfile: ../../infrastructure/docker/api.Dockerfile
+    env_file: .env
+    environment:
+      # Inside the Docker network the API talks to the internal port 5432.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-voice_ai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-voice_ai_lab}
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
