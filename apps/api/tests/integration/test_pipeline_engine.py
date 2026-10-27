@@ -105,7 +105,8 @@ async def test_barge_in_clears_audio_and_cancels_turn() -> None:
         await engine.handle_audio(chunk)
     await asyncio.sleep(0.2)  # turn is now stuck in TTS -> agent speaking
     assert engine.agent_speaking
-    for chunk in np.array_split(speech(300), 15):
+    # Barge-in waits for end-of-speech and ignores brief echo (< MIN_INTERRUPT_MS).
+    for chunk in np.array_split(np.concatenate([speech(1600), silence(900)]), 125):
         await engine.handle_audio(chunk)
     assert transport.cleared == 1
     await engine.end("test")
