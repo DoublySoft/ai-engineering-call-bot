@@ -73,10 +73,13 @@ async def test_per_model_request_shape(model: str, fallbacks: bool) -> None:
     assert ("fallbacks" in kwargs) is fallbacks
 
 
-async def test_refusal_raises() -> None:
+async def test_refusal_reports_usage_then_raises() -> None:
     llm, _ = _llm(FakeStream([], _final(stop_reason="refusal")))
+    seen = []
     with pytest.raises(LLMRefused, match="cyber"):
-        _ = [c async for c in llm.stream("claude-sonnet-5-5", HISTORY, 100)]
+        async for chunk in llm.stream("claude-sonnet-5-5", HISTORY, 100):
+            seen.append(chunk)
+    assert seen and seen[-1].usage and seen[-1].usage.input_tokens == 50  # billed request is still accounted for
 
 
 async def test_fallback_reports_serving_model() -> None:
