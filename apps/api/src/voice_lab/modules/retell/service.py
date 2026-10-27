@@ -33,6 +33,7 @@ from voice_lab.usage.recorder import UsageRecorder
 
 logger = logging.getLogger(__name__)
 PROVIDER = "retell"
+SIP_DOMAIN = "sip.retellai.com"
 ENDED = {"ended", "error", "not_connected"}
 WATCH_INTERVAL_S = 15
 WATCH_GRACE_S = 300  # after the max call duration, for Retell to finalise cost
@@ -103,6 +104,7 @@ async def start_web_call(db: AsyncSession, call_id: uuid.UUID, client: RetellCli
     session = ConversationSession(call_id=call.id, engine="retell", status="active")
     db.add(session)
     call.provider_call_id, call.telephony_provider = web["call_id"], None
+    call.provider_refs = {**(call.provider_refs or {}), "retell_call_id": web["call_id"]}
     call.status, call.answered_at = "in-progress", datetime.now(UTC)
     await db.commit()
     events = EventRecorder(SessionLocal, call.id, session.id)
@@ -123,6 +125,39 @@ async def start_web_call(db: AsyncSession, call_id: uuid.UUID, client: RetellCli
     }
 
 
+def retell_call_id(call: Call) -> str | None:
+    refs = call.provider_refs or {}
+    return refs.get("retell_call_id") or (call.provider_call_id if call.direction == "browser" else None)
+
+
+async def register_phone_call(db: AsyncSession, client: RetellClient, call: Call, settings: Settings) -> str:
+    """Hand a Twilio call to Retell (custom telephony). Returns the SIP URI Twilio must dial."""
+    existing = (call.provider_refs or {}).get("retell_call_id")
+    if existing:  # Twilio may retry the voice webhook for the same call
+        return f"sip:{existing}@{SIP_DOMAIN}"
+    binding = await ensure_retell_agent(db, client, call, settings)
+    registered = await client.register_phone_call(
+        agent_id=binding.external_agent_id,
+        from_number=call.from_number or "",
+        to_number=call.to_number or "",
+        direction=call.direction,
+        metadata={"lab_call_id": str(call.id)},
+    )
+    call.provider_refs = {**(call.provider_refs or {}), "retell_call_id": registered["call_id"]}
+    session = ConversationSession(call_id=call.id, engine="retell", status="active")
+    db.add(session)
+    await db.commit()
+    await EventRecorder(SessionLocal, call.id, session.id).emit(
+        "session.started",
+        engine="retell",
+        provider=PROVIDER,
+        transport="twilio-sip",
+        retell_agent_id=binding.external_agent_id,
+        model=binding.details.get("retell_model"),
+    )
+    return f"sip:{registered['call_id']}@{SIP_DOMAIN}"
+
+
 def _latency_metrics(latency: dict[str, Any] | None) -> dict[str, Any]:
     latency = latency or {}
 
@@ -140,13 +175,15 @@ def _latency_metrics(latency: dict[str, Any] | None) -> dict[str, Any]:
 
 
 async def sync_call(call_id: uuid.UUID, client: RetellClient, client_transcript: list[dict[str, str]] | None = None) -> dict[str, Any]:
-    """Import Retell's view of a finished web call. Idempotent; safe to call repeatedly."""
+    """Import Retell's view of a finished call (web or phone). Idempotent; safe to call repeatedly.
+    For phone calls Twilio stays the source of truth for the call's status and duration."""
     async with SessionLocal() as db:
         call = await db.get(Call, call_id)
-        if call is None or not call.provider_call_id or call.config_snapshot.get("voice_provider") != PROVIDER:
+        rid = retell_call_id(call) if call else None
+        if call is None or not rid or call.config_snapshot.get("voice_provider") != PROVIDER:
             raise LabError("Retell session not found", 404)
         session = await db.scalar(select(ConversationSession).where(ConversationSession.call_id == call.id))
-        data = await client.get_call(call.provider_call_id)
+        data = await client.get_call(rid)
         status = data.get("call_status")
         events = EventRecorder(SessionLocal, call.id, session.id if session else None)
 
@@ -164,29 +201,33 @@ async def sync_call(call_id: uuid.UUID, client: RetellClient, client_transcript:
                 if (u.get("content") or "").strip():
                     await store.add(u["role"], u["content"].strip())
 
-        if status in ENDED and call.ended_at is None:
+        browser = call.direction == "browser"
+        ended_at = datetime.fromtimestamp(data["end_timestamp"] / 1000, UTC) if data.get("end_timestamp") else datetime.now(UTC)
+        if status in ENDED and browser and call.ended_at is None:
             call.status = "completed" if status == "ended" else "failed"
-            call.ended_at = datetime.fromtimestamp(data["end_timestamp"] / 1000, UTC) if data.get("end_timestamp") else datetime.now(UTC)
+            call.ended_at = ended_at
             if data.get("start_timestamp"):
                 call.answered_at = datetime.fromtimestamp(data["start_timestamp"] / 1000, UTC)
             if data.get("duration_ms") is not None:
                 call.duration_seconds = round(data["duration_ms"] / 1000)
             if status != "ended":
                 call.error = f"retell: {status} ({data.get('disconnection_reason')})"
-            if session:
-                session.status, session.ended_at = "completed", call.ended_at
-                session.metrics = {
-                    "engine": "retell",
-                    "turns": sum(1 for u in utterances if u["role"] == "user"),
-                    **_latency_metrics(data.get("latency")),
-                    "disconnection_reason": data.get("disconnection_reason"),
-                    "transcript_source": source if utterances else None,
-                    "measurement_note": "Latencies reported by Retell (p50 over the call).",
-                }
             await db.commit()
             await events.emit(
                 "call.completed" if status == "ended" else "call.failed", provider=PROVIDER, reason=data.get("disconnection_reason")
             )
+        if status in ENDED and session and session.status != "completed":
+            session.status, session.ended_at = "completed", ended_at
+            session.metrics = {
+                "engine": "retell",
+                "turns": sum(1 for u in utterances if u["role"] == "user"),
+                **_latency_metrics(data.get("latency")),
+                "disconnection_reason": data.get("disconnection_reason"),
+                "transcript_source": source if utterances else None,
+                "measurement_note": "Latencies reported by Retell (p50 over the call).",
+            }
+            await db.commit()
+            await events.emit("session.completed", provider=PROVIDER, reason=data.get("disconnection_reason"))
 
         cost = data.get("call_cost")
         already = await db.scalar(select(UsageEvent.id).where(UsageEvent.call_id == call.id, UsageEvent.operation_type == "managed"))

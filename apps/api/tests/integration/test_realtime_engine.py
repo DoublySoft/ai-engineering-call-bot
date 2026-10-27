@@ -255,3 +255,14 @@ async def test_no_barge_in_once_playback_finished() -> None:
     await _drain(conn)
     await engine.end("test")
     assert transport.cleared == 0
+
+
+async def test_realtime_over_twilio_rates() -> None:
+    """Twilio transport: 8 kHz in -> 24 kHz to OpenAI; 24 kHz out is handed to the transport,
+    which resamples to 8 kHz mu-law itself."""
+    engine, conn, _, transport, _ = await _engine(greeting=None)
+    transport.input_sample_rate = 8000
+    await engine.start()
+    await engine.handle_audio(np.zeros(160, np.int16))  # 20 ms Twilio frame
+    assert conn.appended == 480 * 2
+    await engine.end("test")

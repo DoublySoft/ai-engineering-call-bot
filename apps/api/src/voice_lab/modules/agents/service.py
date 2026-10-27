@@ -67,6 +67,7 @@ def _out(agent: VoiceAgent, cfg: VoiceAgentConfiguration, calls: int = 0) -> dic
         "id": agent.id,
         "name": agent.name,
         "description": agent.description,
+        "inbound_number": agent.inbound_number,
         "is_default": agent.is_default,
         "archived": agent.archived,
         "created_at": agent.created_at,
@@ -148,11 +149,22 @@ async def _name_taken(db: AsyncSession, name: str, exclude: uuid.UUID | None = N
     return await db.scalar(query) is not None
 
 
+async def _number_taken(db: AsyncSession, number: str | None, exclude: uuid.UUID | None = None) -> str | None:
+    if not number:
+        return None
+    query = select(VoiceAgent.name).where(VoiceAgent.inbound_number == number)
+    if exclude:
+        query = query.where(VoiceAgent.id != exclude)
+    return await db.scalar(query)
+
+
 async def create_agent(db: AsyncSession, data: AgentWrite, settings: Settings) -> uuid.UUID:
     _validate_runnable(data, settings)
     if await _name_taken(db, data.name):
         raise AgentError(f"an agent named '{data.name}' already exists", 409)
-    agent = VoiceAgent(name=data.name, description=data.description)
+    if owner := await _number_taken(db, data.inbound_number):
+        raise AgentError(f"{data.inbound_number} already answers for agent '{owner}'", 409)
+    agent = VoiceAgent(name=data.name, description=data.description, inbound_number=data.inbound_number)
     db.add(agent)
     await db.flush()
     db.add(
@@ -173,7 +185,9 @@ async def update_agent(db: AsyncSession, agent_id: uuid.UUID, data: AgentWrite, 
     _validate_runnable(data, settings)
     if await _name_taken(db, data.name, exclude=agent_id):
         raise AgentError(f"an agent named '{data.name}' already exists", 409)
-    agent.name, agent.description = data.name, data.description
+    if owner := await _number_taken(db, data.inbound_number, exclude=agent_id):
+        raise AgentError(f"{data.inbound_number} already answers for agent '{owner}'", 409)
+    agent.name, agent.description, agent.inbound_number = data.name, data.description, data.inbound_number
     current = await latest_configuration(db, agent_id)
     new_settings = data.settings.model_dump()
     changed = current is None or (
@@ -215,6 +229,7 @@ async def archive_agent(db: AsyncSession, agent_id: uuid.UUID) -> None:
     if agent.is_default:
         raise AgentError("make another agent the default before archiving this one")
     agent.archived = True
+    agent.inbound_number = None  # free the number; inbound calls fall back to the default agent
     await db.commit()
 
 

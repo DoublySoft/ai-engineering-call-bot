@@ -15,7 +15,7 @@ const ENGINES = [
 
 const VOICE_PROVIDERS = [
   { id: "custom", label: "Custom (this lab)" },
-  { id: "retell", label: "Retell AI (managed, browser only)" },
+  { id: "retell", label: "Retell AI (managed)" },
 ] as const;
 
 function priceLabel(m: CatalogModel): string {
@@ -29,7 +29,8 @@ function priceLabel(m: CatalogModel): string {
 }
 
 function notReady(catalog: Catalog, modality: Modality, voiceProvider = "custom"): string[] {
-  const needed = modality === "outbound" ? ["twilio", "public_base_url", "openai"] : voiceProvider === "retell" ? ["retell"] : ["openai"];
+  const ai = voiceProvider === "retell" ? ["retell"] : ["openai"];
+  const needed = modality === "outbound" ? ["twilio", "public_base_url", ...ai] : ai;
   return needed.filter((k) => !catalog.readiness[k]);
 }
 
@@ -153,8 +154,12 @@ export default function NewCallPage() {
       {catalog && notReady(catalog, modality, form.voice_provider).length > 0 && (
         <Card className="border-amber-500/50">
           <p className="text-sm">
-            Not ready for {modality === "outbound" ? "phone calls" : "browser sessions"}: {notReady(catalog, modality, form.voice_provider).join(", ")}. See{" "}
-            <code>docs/first-call.md</code>.
+            Not ready for {modality === "outbound" ? "phone calls" : "browser sessions"}: {notReady(catalog, modality, form.voice_provider).join(", ")}.{" "}
+            {modality === "outbound" && (
+              <Link href="/telephony" className="text-blue-600 hover:underline">
+                Open the telephony checklist →
+              </Link>
+            )}
           </p>
         </Card>
       )}
@@ -217,7 +222,7 @@ export default function NewCallPage() {
             Voice provider
             <select className={`${field} mt-1`} value={form.voice_provider} onChange={(e) => change("voice_provider", e.target.value)}>
               {VOICE_PROVIDERS.map((p) => (
-                <option key={p.id} value={p.id} disabled={p.id === "retell" && modality === "outbound"}>
+                <option key={p.id} value={p.id}>
                   {p.label}
                 </option>
               ))}
@@ -258,7 +263,7 @@ export default function NewCallPage() {
                 {llmProviders.map((p) => (
                   <option key={p} value={p} disabled={!catalog?.implemented.llm.includes(p)}>
                     {p}
-                    {!catalog?.implemented.llm.includes(p) ? " — Phase 3" : ""}
+                    {!catalog?.implemented.llm.includes(p) ? " — not available" : ""}
                   </option>
                 ))}
               </select>
@@ -370,7 +375,8 @@ export default function NewCallPage() {
           </div>
           <p className="mt-2 text-xs text-muted">
             Retell handles STT, LLM, voice and audio. The lab creates a Retell agent from this agent (reused while nothing changes) and imports
-            Retell&apos;s reported cost and latency after the call. Data storage at Retell: {catalog?.retell.data_storage}.
+            Retell&apos;s reported cost and latency after the call. On the phone, Twilio carries the audio to Retell over SIP. Data storage at
+            Retell: {catalog?.retell.data_storage}.
           </p>
         </Card>
       )}

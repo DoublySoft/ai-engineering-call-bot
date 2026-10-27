@@ -36,7 +36,7 @@ export function CallsTable({ calls }: { calls: CallSummary[] }) {
             >
               <td className="py-2">{new Date(c.created_at).toLocaleString()}</td>
               <td>{DIRECTION[c.direction] ?? c.direction}</td>
-              <td className="tabular-nums">{c.to_number ?? c.from_number ?? "—"}</td>
+              <td className="tabular-nums">{(c.direction === "inbound" ? c.from_number : c.to_number) ?? "—"}</td>
               <td>
                 {c.engine} / {c.llm_model}
               </td>

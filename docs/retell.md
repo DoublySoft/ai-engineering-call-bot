@@ -18,8 +18,8 @@ El laboratorio no duplica nada de eso. Solo:
 - LLM: uno que Retell soporte (`claude-haiku-5-5` → `claude-5.5-haiku`, `gpt-4.1-mini`, etc.; ver
   `integrations/voice/retell/mapping.py`).
 - Voz: un `voice_id` de Retell (por defecto `cartesia-Isabel`, `RETELL_VOICE_ID`).
-- Solo en el navegador. Las llamadas telefónicas con Retell usan su integración con Twilio y quedan fuera de este
-  alcance.
+- También por teléfono, saliente y entrante: el número de Twilio marca a Retell por SIP (`register-phone-call` +
+  `<Dial><Sip>`). Ver [telephony.md](telephony.md).
 
 ## Coste y privacidad
 

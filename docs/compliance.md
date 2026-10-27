@@ -7,6 +7,8 @@ Esto es un laboratorio de pruebas, no un servicio de llamadas. Reglas del proyec
 - **Informar de que hablan con una IA.** El saludo por defecto lo dice; mantenlo así. En varias
   jurisdicciones (p. ej. la AI Act de la UE para sistemas que interactúan con personas, y normas de
   telemarketing en EE. UU.) es obligatorio.
+- **Llamadas entrantes:** por defecto cualquiera puede llamar al número del laboratorio. Para pruebas, limita quién
+  puede hacerlo con `INBOUND_ALLOWLIST`. El agente debe presentarse como IA en su saludo.
 - **Grabaciones:** no se graba audio (Twilio `record=False`, y la API no guarda audio). Si en el futuro se
   activa, hará falta consentimiento explícito de todas las partes (en algunos estados de EE. UU. y países
   europeos se exige el de todas), aviso al inicio de la llamada y una política de retención.

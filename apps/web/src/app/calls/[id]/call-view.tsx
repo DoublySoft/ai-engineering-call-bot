@@ -114,7 +114,13 @@ export function CallView({ id, wsBase }: { id: string; wsBase: string }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold">{call.to_number ?? (call.direction === "browser" ? "Browser session" : call.direction)}</h1>
+        <h1 className="text-xl font-semibold">
+          {call.direction === "browser"
+            ? "Browser session"
+            : call.direction === "inbound"
+              ? `Inbound from ${String(call.from_number ?? "unknown")}`
+              : (call.to_number ?? "Outbound call")}
+        </h1>
         <StatusBadge status={call.status} />
         <span className={`text-xs ${connected ? "text-green-600" : "text-muted"}`}>● {connected ? "live" : "offline"}</span>
         {active && call.direction !== "browser" && (

@@ -176,6 +176,7 @@ export interface Agent {
   id: string;
   name: string;
   description: string | null;
+  inbound_number: string | null;
   is_default: boolean;
   archived: boolean;
   created_at: string;
@@ -229,4 +230,20 @@ export interface RetellWebCall {
   transport: "gateway" | "livekit" | null;
   ice_servers: RTCIceServer[];
   expires_at: number | null;
+}
+
+export interface TelephonyCheck {
+  key: string;
+  label: string;
+  ok: boolean | null;
+  detail: string;
+  needed_for: "outbound" | "inbound" | "both" | "optional";
+}
+
+export interface TelephonyStatus {
+  ready: { outbound: boolean; inbound: boolean };
+  checks: TelephonyCheck[];
+  webhooks: { voice_url: string; status_callback: string; media_stream: string };
+  phone_number: string | null;
+  inbound_routing: { by_number: { number: string; agent_id: string; agent: string }[]; default_agent: string | null; allowlist: string[] };
 }

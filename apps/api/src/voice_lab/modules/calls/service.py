@@ -12,9 +12,11 @@ from voice_lab.core.config import Settings
 from voice_lab.core.database import SessionLocal
 from voice_lab.core.errors import LabError
 from voice_lab.core.security import new_stream_token
-from voice_lab.integrations.telephony.twilio.client import TwilioTelephony, stream_twiml
+from voice_lab.integrations.telephony.twilio.client import TwilioTelephony, sip_twiml, stream_twiml
+from voice_lab.integrations.voice.retell.client import RetellClient
 from voice_lab.modules.agents.service import resolve_session
 from voice_lab.modules.calls.schemas import OutboundCallRequest
+from voice_lab.modules.retell.service import ensure_watcher, register_phone_call
 from voice_lab.modules.sessions.config import check_provider_keys, pricing_snapshot
 from voice_lab.observability.events import EventRecorder
 from voice_lab.persistence.models import Call
@@ -36,13 +38,15 @@ def check_outbound_prerequisites(settings: Settings, to: str) -> None:
         raise CallError("PUBLIC_BASE_URL must be an https URL Twilio can reach (e.g. an ngrok tunnel)", 503)
 
 
-async def start_outbound_call(db: AsyncSession, request: OutboundCallRequest, settings: Settings, telephony: TwilioTelephony) -> Call:
+async def start_outbound_call(
+    db: AsyncSession, request: OutboundCallRequest, settings: Settings, telephony: TwilioTelephony, retell: RetellClient | None = None
+) -> Call:
     check_outbound_prerequisites(settings, request.to)
     config, agent_cfg = await resolve_session(db, request.config, settings)
-    if config["voice_provider"] == "retell":
-        # Retell phone calls go through Retell's own Twilio integration (not built: Twilio-dependent).
-        raise CallError("Retell is available for browser sessions only in this lab")
     check_provider_keys(config, settings)
+    via_retell = config["voice_provider"] == "retell"
+    if via_retell and retell is None:
+        raise CallError("RETELL_API_KEY is not set", 503)
 
     call = Call(
         direction="outbound",
@@ -53,7 +57,7 @@ async def start_outbound_call(db: AsyncSession, request: OutboundCallRequest, se
         agent_configuration_id=agent_cfg.id,
         config_snapshot=config,
         pricing_snapshot=pricing_snapshot(config),
-        stream_token=new_stream_token(),
+        stream_token=None if via_retell else new_stream_token(),
         started_at=datetime.now(UTC),
     )
     db.add(call)
@@ -68,10 +72,16 @@ async def start_outbound_call(db: AsyncSession, request: OutboundCallRequest, se
         agent=config["agent"]["name"],
     )
 
-    twiml = stream_twiml(
-        f"{settings.public_ws_base}/twilio/media",
-        {"call_id": str(call.id), "token": call.stream_token or ""},
-    )
+    try:
+        if via_retell:  # Retell runs the conversation; Twilio only carries the audio over SIP
+            twiml = sip_twiml(await register_phone_call(db, retell, call, settings), settings.max_call_duration_seconds)  # type: ignore[arg-type]
+        else:
+            twiml = stream_twiml(f"{settings.public_ws_base}/twilio/media", {"call_id": str(call.id), "token": call.stream_token or ""})
+    except LabError as exc:
+        call.status, call.error = "failed", str(exc)[:300]
+        await db.commit()
+        await events.emit("call.failed", provider="retell", error=call.error)
+        raise
     try:
         sid = await telephony.start_outbound(
             to=request.to,
@@ -87,6 +97,8 @@ async def start_outbound_call(db: AsyncSession, request: OutboundCallRequest, se
 
     call.provider_call_id, call.status = sid, "initiated"
     await db.commit()
+    if via_retell:
+        ensure_watcher(call.id, retell, settings.max_call_duration_seconds)  # type: ignore[arg-type]
     return call
 
 

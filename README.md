@@ -4,9 +4,9 @@ Laboratorio para experimentar con agentes de voz: llamadas telefónicas reales (
 arquitecturas (pipeline STT → LLM → TTS, speech-to-speech, proveedores gestionados) y medición de
 latencia, consumo y coste por componente.
 
-> Estado: **todas las fases salvo las que dependen de Twilio** (inbound y la prueba real de outbound): pipeline
-> STT → LLM → TTS con OpenAI o Claude, OpenAI Realtime, Retell, voz en el navegador, agentes configurables y
-> analítica comparativa con OpenTelemetry. Ver [docs/roadmap.md](docs/roadmap.md).
+> Estado: **todas las fases implementadas.** Pipeline STT → LLM → TTS con OpenAI o Claude, OpenAI Realtime y Retell;
+> navegador, llamadas salientes y entrantes; agentes configurables; analítica con OpenTelemetry. Para el teléfono solo
+> falta comprar un número de Twilio y conectarlo desde **Telephony** ([docs/telephony.md](docs/telephony.md)).
 
 ## Stack
 
@@ -40,7 +40,7 @@ pnpm dev:web                  # http://localhost:3000
 ```
 
 Para hablar con la IA desde el navegador (sin Twilio) sigue [docs/browser-voice.md](docs/browser-voice.md).
-Para una llamada telefónica real (Twilio + túnel público), [docs/first-call.md](docs/first-call.md).
+Para llamadas telefónicas (Twilio + túnel público), [docs/telephony.md](docs/telephony.md).
 
 ## Tests
 
@@ -59,6 +59,6 @@ Los tests automáticos nunca llaman a Twilio ni a OpenAI: usan mocks y proveedor
 - [Agentes configurables](docs/agents.md)
 - [OpenAI Realtime](docs/realtime.md) · [Retell AI](docs/retell.md) · [Observabilidad y Analytics](docs/observability.md)
 - [Chat de voz en el navegador](docs/browser-voice.md)
-- [Primera llamada real](docs/first-call.md)
+- [Telefonía: conectar el número](docs/telephony.md)
 - [Consentimiento, privacidad y grabaciones](docs/compliance.md)
 - [Roadmap por fases](docs/roadmap.md)

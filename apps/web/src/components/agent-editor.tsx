@@ -39,6 +39,7 @@ export function AgentEditor({ id }: { id?: string }) {
   const [meta, setMeta] = useState<AgentMeta | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [inboundNumber, setInboundNumber] = useState("");
   const [s, setS] = useState<AgentSettings>(EMPTY);
   const [engine, setEngine] = useState<"pipeline" | "realtime">("pipeline");
   const [voiceProvider, setVoiceProvider] = useState<"custom" | "retell">("custom");
@@ -57,6 +58,7 @@ export function AgentEditor({ id }: { id?: string }) {
         setAgent(a);
         setName(a.name);
         setDescription(a.description ?? "");
+        setInboundNumber(a.inbound_number ?? "");
         setS({ ...a.settings, greeting: a.settings.greeting ?? "" });
         setEngine(a.engine);
         setVoiceProvider(a.voice_provider);
@@ -83,6 +85,7 @@ export function AgentEditor({ id }: { id?: string }) {
     const body = {
       name,
       description: description || null,
+      inbound_number: inboundNumber.trim() || null,
       engine,
       voice_provider: voiceProvider,
       settings: { ...s, greeting: s.greeting?.trim() ? s.greeting : null },
@@ -147,6 +150,16 @@ export function AgentEditor({ id }: { id?: string }) {
             Description (for you, not the AI)
             <input className={`${field} mt-1`} value={description} onChange={(e) => setDescription(e.target.value)} />
           </label>
+          <label className="text-sm">
+            Answers inbound calls to (Twilio number, optional)
+            <input
+              className={`${field} mt-1 font-mono`}
+              value={inboundNumber}
+              placeholder="+34910000000"
+              onChange={(e) => setInboundNumber(e.target.value)}
+            />
+            <span className="text-xs text-muted">Calls to numbers without an agent go to the default agent.</span>
+          </label>
         </div>
       </Card>
 
@@ -205,7 +218,7 @@ export function AgentEditor({ id }: { id?: string }) {
             Voice provider
             <select className={`${field} mt-1`} value={voiceProvider} onChange={(e) => setVoiceProvider(e.target.value as "custom" | "retell")}>
               <option value="custom">Custom (this lab)</option>
-              <option value="retell">Retell AI (managed, browser only)</option>
+              <option value="retell">Retell AI (managed)</option>
             </select>
           </label>
           <label className="text-sm">
