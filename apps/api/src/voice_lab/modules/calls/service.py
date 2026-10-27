@@ -90,6 +90,15 @@ async def ensure_agent_configuration(db: AsyncSession, config: dict[str, Any]) -
     return cfg
 
 
+def check_provider_keys(config: dict[str, Any], settings: Settings) -> None:
+    """Fail before dialing/connecting if a selected provider has no API key."""
+    keys = {"openai": settings.openai_api_key, "anthropic": settings.anthropic_api_key}
+    for part in ("stt", "llm", "tts"):
+        provider = config[f"{part}_provider"]
+        if provider in keys and not keys[provider]:
+            raise CallError(f"{provider.upper()}_API_KEY is not set (needed for {part.upper()})", 503)
+
+
 def check_outbound_prerequisites(settings: Settings, to: str) -> None:
     if to not in settings.outbound_allowlist:
         raise CallError("number is not in OUTBOUND_ALLOWLIST (test numbers only)", 403)
@@ -97,13 +106,12 @@ def check_outbound_prerequisites(settings: Settings, to: str) -> None:
         raise CallError("Twilio is not configured (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_PHONE_NUMBER)", 503)
     if not settings.public_base_url.startswith("https://"):
         raise CallError("PUBLIC_BASE_URL must be an https URL Twilio can reach (e.g. an ngrok tunnel)", 503)
-    if not settings.openai_api_key:
-        raise CallError("OPENAI_API_KEY is not set", 503)
 
 
 async def start_outbound_call(db: AsyncSession, request: OutboundCallRequest, settings: Settings, telephony: TwilioTelephony) -> Call:
     check_outbound_prerequisites(settings, request.to)
     config = resolve_config(request.config, settings)
+    check_provider_keys(config, settings)
     agent_cfg = await ensure_agent_configuration(db, config)
 
     call = Call(

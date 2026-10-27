@@ -68,3 +68,18 @@ def test_approximate_pricing_is_estimated_even_when_verified() -> None:
     assert pricing.verified and pricing.approximate  # type: ignore[union-attr]
     cost = calculate_cost(pricing, {D.AUDIO_INPUT_SECONDS: 60})
     assert cost.amount_usd == Decimal("0.003") and cost.status == CostStatus.ESTIMATED
+
+
+def test_claude_cost_includes_cache_reads_and_writes() -> None:
+    pricing = get_model("anthropic", "claude-sonnet-5-5").current_pricing()  # type: ignore[union-attr]
+    cost = calculate_cost(
+        pricing,
+        {
+            D.INPUT_TEXT_TOKENS: 1_000_000,
+            D.CACHE_WRITE_INPUT_TEXT_TOKENS: 1_000_000,
+            D.CACHED_INPUT_TEXT_TOKENS: 1_000_000,
+            D.OUTPUT_TEXT_TOKENS: 1_000_000,
+        },
+    )
+    assert cost.amount_usd == Decimal("14.60")  # 2 + 2.50 + 0.10 + 10
+    assert cost.status == CostStatus.CALCULATED

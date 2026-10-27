@@ -254,35 +254,47 @@ class PipelineEngine:
         # Audio seconds are measured by us; OpenAI bills the file it receives.
         # calculate_cost marks the result `estimated` when the catalog price is only
         # an approximation of the real billing (e.g. token-billed transcription).
-        cost = calculate_cost(self._pricing(provider, model), {D.AUDIO_INPUT_SECONDS: transcript.audio_duration_ms / 1000})
         reported = transcript.provider_usage or {}
+        # Prefer the duration the provider says it billed (gpt-transcribe rounds up).
+        billed_seconds = reported.get("seconds") if reported.get("type") == "duration" else None
+        seconds = billed_seconds if billed_seconds is not None else transcript.audio_duration_ms / 1000
+        cost = calculate_cost(self._pricing(provider, model), {D.AUDIO_INPUT_SECONDS: seconds})
         await self.ctx.usage.record(
             provider=provider,
             model=model,
             operation_type="stt",
             cost=cost,
-            usage_source="measured",
-            audio_duration_ms=transcript.audio_duration_ms,
+            usage_source="provider_reported" if billed_seconds is not None else "measured",
+            audio_duration_ms=int(seconds * 1000),
             input_tokens=reported.get("input_tokens"),
             output_tokens=reported.get("output_tokens"),
             latency_ms=latency_ms,
             correlation_id=cid,
-            details={"provider_usage": reported} if reported else {},
+            details={"measured_audio_ms": transcript.audio_duration_ms, **({"provider_usage": reported} if reported else {})},
         )
 
     async def _record_llm(self, usage: LLMUsage | None, model: str, latency_ms: int, cid: str) -> None:
         provider = self.llm.provider
+        details: dict[str, Any] = {}
         quantities = {}
+        billed_model = model
         if usage:
             quantities = {
                 D.INPUT_TEXT_TOKENS: usage.input_tokens or 0,
                 D.CACHED_INPUT_TEXT_TOKENS: usage.cached_tokens or 0,
                 D.OUTPUT_TEXT_TOKENS: usage.output_tokens or 0,
             }
-        cost = calculate_cost(self._pricing(provider, model), quantities)
+            if usage.cache_write_tokens is not None:
+                quantities[D.CACHE_WRITE_INPUT_TEXT_TOKENS] = usage.cache_write_tokens
+                details["cache_write_tokens"] = usage.cache_write_tokens
+            if usage.served_by_model:
+                # A provider-side fallback answered: bill at the model that served it.
+                billed_model = usage.served_by_model
+                details["requested_model"] = model
+        cost = calculate_cost(self._pricing(provider, billed_model), quantities)
         await self.ctx.usage.record(
             provider=provider,
-            model=model,
+            model=billed_model,
             operation_type="llm",
             cost=cost,
             usage_source="provider_reported" if usage else "estimated",
@@ -291,6 +303,7 @@ class PipelineEngine:
             cached_tokens=usage.cached_tokens if usage else None,
             latency_ms=latency_ms,
             correlation_id=cid,
+            details=details,
         )
 
     async def _record_tts(self, text: str, model: str, latency_ms: int, cid: str) -> None:

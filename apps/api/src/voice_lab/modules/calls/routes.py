@@ -53,6 +53,7 @@ async def catalog(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
         },
         "outbound_allowlist": settings.outbound_allowlist,
         "voices": ["alloy", "ash", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer"],
+        "browser_audio": {"input_sample_rate": 16000, "output_sample_rate": 24000},
         "readiness": {
             "twilio": settings.twilio_configured,
             "openai": bool(settings.openai_api_key),

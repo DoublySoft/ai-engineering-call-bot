@@ -23,6 +23,7 @@ const STATUS_COLOR: Record<string, string> = {
   ringing: "bg-amber-500/15 text-amber-600",
   initiated: "bg-amber-500/15 text-amber-600",
   queued: "bg-amber-500/15 text-amber-600",
+  ready: "bg-blue-500/15 text-blue-600",
   failed: "bg-red-500/15 text-red-600",
   busy: "bg-red-500/15 text-red-600",
   "no-answer": "bg-red-500/15 text-red-600",

@@ -12,6 +12,7 @@ from voice_lab.core.config import get_settings
 from voice_lab.core.database import SessionLocal
 from voice_lab.core.logging import configure_logging
 from voice_lab.integrations.telephony.twilio.routes import router as twilio_router
+from voice_lab.modules.browser.routes import router as browser_router
 from voice_lab.modules.calls.routes import router as calls_router
 from voice_lab.modules.dashboard.routes import router as dashboard_router
 
@@ -38,6 +39,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 app.include_router(calls_router)
+app.include_router(browser_router)
 app.include_router(dashboard_router)
 app.include_router(twilio_router)
 

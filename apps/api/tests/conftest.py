@@ -6,7 +6,10 @@ import os
 
 from voice_lab.core.config import get_settings
 
-_base_url = get_settings().database_url
+_real = get_settings()
+_base_url = _real.database_url
+# Manual tests (-m manual) need the real keys from .env; everything else gets fakes.
+REAL_KEYS = {"openai": _real.openai_api_key, "anthropic": _real.anthropic_api_key}
 TEST_DB_URL = _base_url.rsplit("/", 1)[0] + "/" + _base_url.rsplit("/", 1)[1].split("?")[0] + "_test"
 os.environ["DATABASE_URL"] = TEST_DB_URL
 os.environ["ADMIN_API_TOKEN"] = "test-admin-token"
@@ -16,6 +19,7 @@ os.environ["TWILIO_ACCOUNT_SID"] = "AC" + "0" * 32
 os.environ["TWILIO_AUTH_TOKEN"] = "test-twilio-token"
 os.environ["TWILIO_PHONE_NUMBER"] = "+15005550006"
 os.environ["OPENAI_API_KEY"] = "sk-test-not-real"
+os.environ["ANTHROPIC_API_KEY"] = ""
 get_settings.cache_clear()
 
 

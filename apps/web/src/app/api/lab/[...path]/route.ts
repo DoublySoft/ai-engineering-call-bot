@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { apiFetch } from "@/lib/server-api";
 
 // Same-origin proxy so browser code can reach /api/* without holding the admin token.
-const ALLOWED = /^(catalog|dashboard|calls(\/[0-9a-f-]{36}(\/hangup)?)?)$/;
+const ALLOWED = /^(catalog|dashboard|browser-sessions|calls(\/[0-9a-f-]{36}(\/(hangup|browser-token))?)?)$/;
 
 async function forward(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
   const path = (await params).path.join("/");
