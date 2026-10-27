@@ -23,6 +23,8 @@ export class BrowserVoiceClient {
   private marks: { name: string; at: number }[] = [];
   private markTimer: ReturnType<typeof setInterval> | null = null;
   private state: VoiceState = "idle";
+  /** Set by stop(); start() checks it after every await so a late permission grant can't open a session. */
+  private cancelled = false;
 
   constructor(private opts: VoiceClientOptions) {}
 
@@ -43,11 +45,13 @@ export class BrowserVoiceClient {
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
     } catch (e) {
-      this.setState("error", `Microphone permission denied or unavailable (${(e as Error).name})`);
+      if (!this.cancelled) this.setState("error", `Microphone permission denied or unavailable (${(e as Error).name})`);
       return;
     }
+    if (this.cancelled) return this.teardown();
     this.ctx = new AudioContext();
     await this.ctx.audioWorklet.addModule("/mic-worklet.js");
+    if (this.cancelled) return this.teardown();
     this.node = new AudioWorkletNode(this.ctx, "mic-processor");
     this.ctx.createMediaStreamSource(this.stream).connect(this.node);
 
@@ -120,6 +124,7 @@ export class BrowserVoiceClient {
   }
 
   stop() {
+    this.cancelled = true;
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: "stop" }));
     this.ws?.close();
     this.teardown();

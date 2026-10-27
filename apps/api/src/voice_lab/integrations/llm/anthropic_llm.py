@@ -63,12 +63,9 @@ class AnthropicLLM:
                 yield LLMChunk(text=text)
             final = await stream.get_final_message()
 
-        if final.stop_reason == "refusal":
-            category = final.stop_details.category if final.stop_details else None
-            raise LLMRefused(f"Claude declined the request (category: {category})")
-
         usage = final.usage
         fell_back = any(getattr(it, "type", None) == "fallback_message" for it in (usage.iterations or []))
+        # Usage first, even for a refusal: the request was billed and counts toward the spend limit.
         yield LLMChunk(
             usage=LLMUsage(
                 input_tokens=usage.input_tokens,
@@ -78,3 +75,6 @@ class AnthropicLLM:
                 served_by_model=final.model if fell_back else None,
             )
         )
+        if final.stop_reason == "refusal":
+            category = final.stop_details.category if final.stop_details else None
+            raise LLMRefused(f"Claude declined the request (category: {category})")

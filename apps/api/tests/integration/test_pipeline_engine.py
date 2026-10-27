@@ -162,3 +162,22 @@ async def test_llm_failure_still_unblocks_turn() -> None:
         msg = await db.scalar(select(ConversationMessage).join(ConversationSession).where(ConversationSession.call_id == call_id))
     assert "llm.failed" in names and "turn.failed" in names
     assert msg is not None and msg.role == "user"
+
+
+async def test_refused_llm_turn_still_records_usage() -> None:
+    from voice_lab.integrations.llm.base import LLMUsage
+
+    class RefusingLLM(FakeLLM):
+        async def stream(self, model, messages, max_output_tokens):  # type: ignore[no-untyped-def]
+            yield LLMChunk(usage=LLMUsage(input_tokens=40, cached_tokens=0, output_tokens=3))
+            raise RuntimeError("Claude declined the request (category: cyber)")
+
+    engine, _, call_id = await _make_engine(llm=RefusingLLM())
+    await engine.start()
+    await _speak_turn(engine)
+    await engine.end("test")
+    async with SessionLocal() as db:
+        llm_usage = await db.scalar(select(UsageEvent).where(UsageEvent.call_id == call_id, UsageEvent.operation_type == "llm"))
+        names = (await db.scalars(select(CallEvent.name).where(CallEvent.call_id == call_id))).all()
+    assert llm_usage is not None and llm_usage.input_tokens == 40 and llm_usage.cost_status == "calculated"
+    assert "turn.failed" in names
