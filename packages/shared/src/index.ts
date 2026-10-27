@@ -33,7 +33,7 @@ export interface CatalogModel {
   key: string;
   provider: string;
   model: string;
-  kind: "llm" | "stt" | "tts" | "speech_to_speech" | "telephony";
+  kind: "llm" | "stt" | "tts" | "speech_to_speech" | "telephony" | "managed";
   display_name: string;
   capabilities: ModelCapabilities;
   deprecated: string | null;
@@ -48,6 +48,8 @@ export interface Catalog {
   outbound_allowlist: string[];
   voices: string[];
   browser_audio: { input_sample_rate: number; output_sample_rate: number };
+  realtime_voices: string[];
+  retell: { llm_models: string[]; default_voice_id: string; data_storage: string };
   readiness: Record<string, boolean>;
 }
 
@@ -165,6 +167,8 @@ export interface AgentSettings {
   tts_provider: string | null;
   tts_model: string | null;
   tts_voice: string | null;
+  s2s_model: string | null;
+  retell_voice_id: string | null;
   max_output_tokens: number;
 }
 
@@ -193,4 +197,36 @@ export interface AgentDetail extends Agent {
 export interface AgentMeta {
   languages: Record<string, string>;
   voice_rules: string;
+}
+
+export interface ArchitectureStats {
+  architecture: string;
+  model: string;
+  sessions: number;
+  completed: number;
+  turns: number;
+  duration_seconds: number;
+  errors: number;
+  first_audio_ms: { source: "measured" | "provider_reported" | null; p50: number | null; p90: number | null; samples: number };
+  stages_ms: Record<string, number>;
+  cost_usd: string;
+  cost_per_turn_usd: string | null;
+  cost_per_minute_usd: string | null;
+  cost_complete: boolean;
+}
+
+export interface Analytics {
+  window_days: number;
+  by_architecture: ArchitectureStats[];
+  cost_by_provider: { provider: string; operation: string; cost_usd: string; events: number; statuses: CostStatus[] }[];
+  daily: { date: string; cost_usd: string; sessions: number }[];
+  notes: string[];
+}
+
+export interface RetellWebCall {
+  call_id: string;
+  access_token: string;
+  transport: "gateway" | "livekit" | null;
+  ice_servers: RTCIceServer[];
+  expires_at: number | null;
 }

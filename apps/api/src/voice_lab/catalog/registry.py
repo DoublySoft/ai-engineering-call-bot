@@ -149,6 +149,42 @@ CATALOG: list[ModelDefinition] = [
             (D.OUTPUT_AUDIO_TOKENS, U.USD_PER_1M_TOKENS, "12.00"),
         ),
     ),
+    # ---- Speech-to-speech (OpenAI Realtime). Text and audio tokens are billed separately.
+    *[
+        ModelDefinition(
+            provider=ModelProvider.OPENAI,
+            model=model,
+            kind=ModelKind.SPEECH_TO_SPEECH,
+            display_name=name,
+            capabilities=Capabilities(
+                supports_streaming=True,
+                supports_tool_calling=True,
+                supports_audio_input=True,
+                supports_audio_output=True,
+                reports_usage=True,
+            ),
+            pricing=_openai_price(
+                (D.INPUT_TEXT_TOKENS, U.USD_PER_1M_TOKENS, text_in),
+                (D.CACHED_INPUT_TEXT_TOKENS, U.USD_PER_1M_TOKENS, text_cached),
+                (D.OUTPUT_TEXT_TOKENS, U.USD_PER_1M_TOKENS, text_out),
+                (D.INPUT_AUDIO_TOKENS, U.USD_PER_1M_TOKENS, audio_in),
+                (D.CACHED_INPUT_AUDIO_TOKENS, U.USD_PER_1M_TOKENS, audio_cached),
+                (D.OUTPUT_AUDIO_TOKENS, U.USD_PER_1M_TOKENS, audio_out),
+            ),
+        )
+        for model, name, text_in, text_cached, text_out, audio_in, audio_cached, audio_out in (
+            ("gpt-realtime-2.1-mini", "GPT Realtime 2.1 mini", "0.60", "0.06", "2.40", "10.00", "0.30", "20.00"),
+            ("gpt-realtime-2.1", "GPT Realtime 2.1", "4.00", "0.40", "24.00", "32.00", "0.40", "64.00"),
+        )
+    ],
+    # ---- Managed voice platform: Retell reports the combined cost per call.
+    ModelDefinition(
+        provider=ModelProvider.RETELL,
+        model="retell-web-call",
+        kind=ModelKind.MANAGED,
+        display_name="Retell AI (managed agent)",
+        capabilities=Capabilities(supports_audio_input=True, supports_audio_output=True, reports_usage=True),
+    ),
     # ---- Telephony: Twilio reports the real price on the Call resource.
     ModelDefinition(
         provider=ModelProvider.TWILIO,

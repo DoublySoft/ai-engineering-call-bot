@@ -27,6 +27,10 @@ def _openai() -> AsyncOpenAI:
     return AsyncOpenAI(api_key=key)
 
 
+def openai_client() -> AsyncOpenAI:
+    return _openai()
+
+
 @lru_cache
 def _anthropic() -> AsyncAnthropic:
     key = get_settings().anthropic_api_key
@@ -55,4 +59,11 @@ def tts_client(provider: str) -> TTS:
     raise ProviderNotAvailable(f"TTS provider '{provider}' is not implemented yet")
 
 
-IMPLEMENTED = {"llm": {"openai", "anthropic"}, "stt": {"openai"}, "tts": {"openai"}, "engine": {"pipeline"}, "voice_provider": {"custom"}}
+IMPLEMENTED = {
+    "llm": {"openai", "anthropic"},
+    "stt": {"openai"},
+    "tts": {"openai"},
+    "speech_to_speech": {"openai"},
+    "engine": {"pipeline", "realtime"},
+    "voice_provider": {"custom", "retell"},
+}

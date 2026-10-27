@@ -1,5 +1,6 @@
 import uuid
 
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from voice_lab.persistence.models import ConversationMessage
@@ -17,3 +18,12 @@ class TranscriptStore:
             db.add(ConversationMessage(session_id=self._session_id, seq=self._seq, role=role, text=text, interrupted=interrupted))
             await db.commit()
         return self._seq
+
+    async def mark_interrupted(self, seq: int) -> None:
+        async with self._sessionmaker() as db:
+            await db.execute(
+                update(ConversationMessage)
+                .where(ConversationMessage.session_id == self._session_id, ConversationMessage.seq == seq)
+                .values(interrupted=True)
+            )
+            await db.commit()

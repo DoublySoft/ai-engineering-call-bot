@@ -4,8 +4,9 @@ Laboratorio para experimentar con agentes de voz: llamadas telefónicas reales (
 arquitecturas (pipeline STT → LLM → TTS, speech-to-speech, proveedores gestionados) y medición de
 latencia, consumo y coste por componente.
 
-> Estado: **Fases 1–4 + agentes configurables**: foundation, llamada outbound (Twilio), Anthropic como LLM,
-> chat de voz en el navegador y agentes con instrucciones y conocimiento. Ver [docs/roadmap.md](docs/roadmap.md).
+> Estado: **todas las fases salvo las que dependen de Twilio** (inbound y la prueba real de outbound): pipeline
+> STT → LLM → TTS con OpenAI o Claude, OpenAI Realtime, Retell, voz en el navegador, agentes configurables y
+> analítica comparativa con OpenTelemetry. Ver [docs/roadmap.md](docs/roadmap.md).
 
 ## Stack
 
@@ -56,6 +57,7 @@ Los tests automáticos nunca llaman a Twilio ni a OpenAI: usan mocks y proveedor
 - [Arquitectura, contratos y decisiones](docs/architecture.md)
 - [Entorno local, puertos y varios proyectos](docs/local-setup.md)
 - [Agentes configurables](docs/agents.md)
+- [OpenAI Realtime](docs/realtime.md) · [Retell AI](docs/retell.md) · [Observabilidad y Analytics](docs/observability.md)
 - [Chat de voz en el navegador](docs/browser-voice.md)
 - [Primera llamada real](docs/first-call.md)
 - [Consentimiento, privacidad y grabaciones](docs/compliance.md)

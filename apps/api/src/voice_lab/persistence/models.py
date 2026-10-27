@@ -10,12 +10,14 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -101,6 +103,22 @@ class VoiceAgentConfiguration(Base, Timestamped):
     agent: Mapped[VoiceAgent] = relationship(back_populates="configurations")
 
 
+class ProviderAgentBinding(Base, Timestamped):
+    """A managed provider's agent (e.g. a Retell agent + LLM) created from a lab
+    configuration. Keyed by a fingerprint of everything that provider sees, so an
+    identical setup is reused instead of creating duplicates on every call."""
+
+    __tablename__ = "provider_agent_bindings"
+    __table_args__ = (UniqueConstraint("provider", "fingerprint", name="uq_provider_agent_fingerprint"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
+    provider: Mapped[str] = mapped_column(String(32))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    configuration_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("voice_agent_configurations.id"))
+    external_agent_id: Mapped[str] = mapped_column(String(128))
+    external_llm_id: Mapped[str | None] = mapped_column(String(128))
+    details: Mapped[dict[str, Any]] = mapped_column(Json, default=dict)
+
+
 # ---------------------------------------------------------------- calls
 class Call(Base, Timestamped):
     __tablename__ = "calls"
@@ -150,6 +168,10 @@ class ConversationMessage(Base, Timestamped):
 
 class UsageEvent(Base):
     __tablename__ = "usage_events"
+    __table_args__ = (
+        # A managed provider's per-call cost is imported exactly once, even if syncs race.
+        Index("uq_usage_managed_per_call", "call_id", unique=True, postgresql_where=text("operation_type = 'managed'")),
+    )
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
     call_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("calls.id", ondelete="CASCADE"), index=True)
     session_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("conversation_sessions.id", ondelete="CASCADE"))

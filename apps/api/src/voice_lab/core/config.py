@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     tts_provider: str = "openai"
     tts_model: str = "tts-1"
     tts_voice: str = "alloy"
+    s2s_model: str = "gpt-realtime-2.1-mini"
+    retell_voice_id: str = "cartesia-Isabel"
+    # Retell keeps transcripts/recordings unless told otherwise. The lab's default
+    # stores nothing beyond basic attributes; the transcript comes from the browser.
+    retell_data_storage: str = "basic_attributes_only"
     agent_language: str = "es"
 
     @field_validator("outbound_allowlist", "cors_origins", mode="before")

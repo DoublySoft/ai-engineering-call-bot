@@ -14,8 +14,10 @@ from voice_lab.core.config import Settings, get_settings
 from voice_lab.core.database import get_db
 from voice_lab.core.errors import LabError
 from voice_lab.core.security import events_token, require_admin, verify_events_token
+from voice_lab.engines.realtime import REALTIME_VOICES
 from voice_lab.integrations.registry import IMPLEMENTED
 from voice_lab.integrations.telephony.twilio.client import TwilioTelephony
+from voice_lab.integrations.voice.retell.mapping import RETELL_LLM_MODELS
 from voice_lab.modules.calls.schemas import CallDetail, CallSummary, OutboundCallRequest
 from voice_lab.modules.calls.service import start_outbound_call
 from voice_lab.observability.hub import hub
@@ -51,14 +53,23 @@ async def catalog(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
             "tts_model": settings.tts_model,
             "tts_voice": settings.tts_voice,
             "language": settings.agent_language,
+            "s2s_model": settings.s2s_model,
+            "retell_voice_id": settings.retell_voice_id,
         },
         "outbound_allowlist": settings.outbound_allowlist,
         "voices": ["alloy", "ash", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer"],
         "browser_audio": {"input_sample_rate": 16000, "output_sample_rate": 24000},
+        "realtime_voices": sorted(REALTIME_VOICES),
+        "retell": {
+            "llm_models": sorted(RETELL_LLM_MODELS),
+            "default_voice_id": settings.retell_voice_id,
+            "data_storage": settings.retell_data_storage,
+        },
         "readiness": {
             "twilio": settings.twilio_configured,
             "openai": bool(settings.openai_api_key),
             "anthropic": bool(settings.anthropic_api_key),
+            "retell": bool(settings.retell_api_key),
             "public_base_url": settings.public_base_url.startswith("https://"),
         },
     }

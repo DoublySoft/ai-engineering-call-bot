@@ -11,13 +11,17 @@ from voice_lab.catalog.sync import sync_catalog
 from voice_lab.core.config import get_settings
 from voice_lab.core.database import SessionLocal
 from voice_lab.core.logging import configure_logging
+from voice_lab.core.telemetry import configure_tracing
 from voice_lab.integrations.telephony.twilio.routes import router as twilio_router
 from voice_lab.modules.agents.routes import router as agents_router
+from voice_lab.modules.analytics.routes import router as analytics_router
 from voice_lab.modules.browser.routes import router as browser_router
 from voice_lab.modules.calls.routes import router as calls_router
 from voice_lab.modules.dashboard.routes import router as dashboard_router
+from voice_lab.modules.retell.routes import router as retell_router
 
 configure_logging()
+configure_tracing()
 logger = logging.getLogger("voice_lab")
 
 
@@ -41,7 +45,9 @@ app.add_middleware(
 )
 app.include_router(calls_router)
 app.include_router(agents_router)
+app.include_router(analytics_router)
 app.include_router(browser_router)
+app.include_router(retell_router)
 app.include_router(dashboard_router)
 app.include_router(twilio_router)
 

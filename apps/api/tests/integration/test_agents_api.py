@@ -68,7 +68,8 @@ def test_validation_errors(client: TestClient) -> None:
     assert client.post("/api/agents", headers=ADMIN, json={**RECEPTIONIST, "name": "recepción c"}).status_code == 409
     bad_model = {**RECEPTIONIST, "name": "X", "settings": {**RECEPTIONIST["settings"], "llm_model": "nope"}}
     assert client.post("/api/agents", headers=ADMIN, json=bad_model).status_code == 400
-    assert client.post("/api/agents", headers=ADMIN, json={**RECEPTIONIST, "name": "Y", "engine": "realtime"}).status_code == 400
+    bad_s2s = {**RECEPTIONIST, "name": "Y", "engine": "realtime", "settings": {**RECEPTIONIST["settings"], "s2s_model": "tts-1"}}
+    assert client.post("/api/agents", headers=ADMIN, json=bad_s2s).status_code == 400
 
 
 def test_session_uses_agent_and_records_version(client: TestClient) -> None:

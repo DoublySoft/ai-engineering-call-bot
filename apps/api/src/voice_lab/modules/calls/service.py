@@ -39,6 +39,9 @@ def check_outbound_prerequisites(settings: Settings, to: str) -> None:
 async def start_outbound_call(db: AsyncSession, request: OutboundCallRequest, settings: Settings, telephony: TwilioTelephony) -> Call:
     check_outbound_prerequisites(settings, request.to)
     config, agent_cfg = await resolve_session(db, request.config, settings)
+    if config["voice_provider"] == "retell":
+        # Retell phone calls go through Retell's own Twilio integration (not built: Twilio-dependent).
+        raise CallError("Retell is available for browser sessions only in this lab")
     check_provider_keys(config, settings)
 
     call = Call(
