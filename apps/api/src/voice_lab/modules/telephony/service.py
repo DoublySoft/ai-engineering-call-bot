@@ -11,6 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from voice_lab.core.config import Settings
 from voice_lab.core.errors import LabError
 from voice_lab.integrations.telephony.twilio.client import TwilioTelephony
+from voice_lab.modules.agents.service import resolve_session
+from voice_lab.modules.calls.inbound import agent_for_number
+from voice_lab.modules.calls.schemas import SessionConfig
+from voice_lab.modules.sessions.config import check_provider_keys
 from voice_lab.persistence.models import VoiceAgent
 
 
@@ -41,6 +45,20 @@ async def _public_url_reaches_us(url: str) -> tuple[bool, str]:
     if r.status_code == 200 and r.headers.get("content-type", "").startswith("application/json") and r.json().get("status"):
         return True, "reaches this API"
     return False, f"answered {r.status_code}, but not as this API (wrong tunnel target or port?)"
+
+
+async def _agent_keys_check(db: AsyncSession, settings: Settings, agent_id: Any, label: str, scope: str) -> Check:
+    try:
+        config, _ = await resolve_session(db, SessionConfig(agent_id=agent_id), settings)
+    except LabError as exc:
+        return Check(f"agent_{scope}", f"{label} can run", False, str(exc), scope)
+    arch = "Retell" if config["voice_provider"] == "retell" else ("OpenAI Realtime" if config["engine"] == "realtime" else "pipeline")
+    name = f"{config['agent']['name']} ({arch})"
+    try:
+        check_provider_keys(config, settings)
+    except LabError as exc:
+        return Check(f"agent_{scope}", f"{label} has its provider keys", False, f"{name}: {exc}", scope)
+    return Check(f"agent_{scope}", f"{label} has its provider keys", True, name, scope)
 
 
 async def telephony_status(db: AsyncSession, settings: Settings, telephony: TwilioTelephony | None = None) -> dict[str, Any]:
@@ -117,10 +135,12 @@ async def telephony_status(db: AsyncSession, settings: Settings, telephony: Twil
             "outbound",
         )
     )
-    checks.append(Check("openai", "OPENAI_API_KEY set (STT/TTS or Realtime)", bool(settings.openai_api_key)))
+    # AI keys depend on who answers: check the agent's real architecture, exactly as a call would.
+    inbound_agent = await agent_for_number(db, settings.twilio_phone_number) if settings.twilio_phone_number else None
     checks.append(
-        Check("retell", "RETELL_API_KEY set (only for agents that use Retell)", bool(settings.retell_api_key) or None, "", "optional")
+        await _agent_keys_check(db, settings, inbound_agent.id if inbound_agent else None, "Agent answering the lab's number", "inbound")
     )
+    checks.append(await _agent_keys_check(db, settings, None, "Default agent (outbound calls; can be overridden per call)", "outbound"))
 
     def ready(scope: str) -> bool:
         return all(c.ok for c in checks if c.needed_for in ("both", scope))

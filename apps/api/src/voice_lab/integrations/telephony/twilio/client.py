@@ -62,6 +62,11 @@ class TwilioTelephony:
         duration = int(call.duration) if call.duration not in (None, "") else None
         return TwilioPrice(amount, call.price_unit, duration)
 
+    async def child_call_sids(self, parent_sid: str) -> list[str]:
+        """Legs created by <Dial> (e.g. the SIP leg to Retell). Twilio bills each leg separately."""
+        children = await asyncio.to_thread(self._client.calls.list, parent_call_sid=parent_sid, limit=20)
+        return [c.sid for c in children]
+
     async def account_status(self) -> str:
         account = await asyncio.to_thread(self._client.api.v2010.accounts(self._settings.twilio_account_sid).fetch)
         return account.status

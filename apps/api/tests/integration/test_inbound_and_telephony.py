@@ -208,3 +208,82 @@ async def test_configure_fails_clearly_when_number_is_missing() -> None:
 
     with pytest.raises(LabError, match="not in this Twilio account"):
         await telephony_service.configure_number(get_settings(), FakeTwilio(exists=False))
+
+
+async def test_telephony_cost_includes_the_sip_child_leg() -> None:
+    from decimal import Decimal
+
+    from sqlalchemy import select
+
+    from voice_lab.core.database import SessionLocal
+    from voice_lab.integrations.telephony.twilio.client import TwilioPrice
+    from voice_lab.modules.calls.schemas import SessionConfig
+    from voice_lab.modules.calls.service import record_telephony_cost
+    from voice_lab.modules.sessions.config import resolve_config
+    from voice_lab.persistence.models import Call, UsageEvent
+
+    class LegsTwilio:
+        def __init__(self) -> None:
+            self.attempt = 0
+
+        async def child_call_sids(self, parent: str) -> list[str]:
+            return ["CAchild"]
+
+        async def fetch_price(self, sid: str) -> TwilioPrice:
+            if sid == "CAparent":
+                return TwilioPrice(Decimal("0.0140"), "USD", 60)
+            self.attempt += 1  # the SIP leg is priced a bit later
+            return TwilioPrice(Decimal("0.0040") if self.attempt > 1 else None, "USD" if self.attempt > 1 else None, 58)
+
+    async with SessionLocal() as db:
+        call = Call(direction="outbound", status="completed", config_snapshot=resolve_config(SessionConfig(), get_settings()))
+        db.add(call)
+        await db.commit()
+    await record_telephony_cost(call.id, "CAparent", 60, LegsTwilio(), attempts=3, delay_s=0)  # type: ignore[arg-type]
+    async with SessionLocal() as db:
+        rows = (await db.scalars(select(UsageEvent).where(UsageEvent.call_id == call.id))).all()
+    legs = {r.details["leg"]: r for r in rows}
+    assert set(legs) == {"parent", "child"} and len(rows) == 2
+    assert legs["parent"].cost_usd == Decimal("0.014") and legs["child"].cost_usd == Decimal("0.004")
+    assert all(r.cost_status == "provider_reported" for r in rows)
+
+
+def test_readiness_follows_the_answering_agents_providers(client: TestClient) -> None:
+    settings = get_settings()
+    fake = FakeTwilio(voice_url="https://lab.example.test/twilio/voice")
+
+    def checks() -> dict:
+        with (
+            patch.object(telephony_service, "_public_url_reaches_us", new=AsyncMock(return_value=(True, "ok"))),
+            patch.object(telephony_service, "TwilioTelephony", return_value=fake),
+        ):
+            data = client.get("/api/telephony/status", headers=ADMIN).json()
+        return {"ready": data["ready"], **{c["key"]: c for c in data["checks"]}}
+
+    claude = _agent(
+        client,
+        "Readiness Claude",
+        inbound_number=LAB_NUMBER,
+        settings={"instructions": "x", "llm_provider": "anthropic", "llm_model": "claude-haiku-5-5"},
+    )
+    data = checks()
+    assert data["ready"]["inbound"] is False and "ANTHROPIC_API_KEY" in data["agent_inbound"]["detail"], data
+    assert data["ready"]["outbound"] is True
+
+    client.delete(f"/api/agents/{claude['id']}", headers=ADMIN)
+    retell = _agent(
+        client,
+        "Readiness Retell",
+        inbound_number=LAB_NUMBER,
+        voice_provider="retell",
+        settings={"instructions": "x", "llm_provider": "anthropic", "llm_model": "claude-haiku-5-5"},
+    )
+    original = settings.openai_api_key
+    settings.openai_api_key = ""
+    try:
+        data = checks()
+    finally:
+        settings.openai_api_key = original
+        client.delete(f"/api/agents/{retell['id']}", headers=ADMIN)
+    assert data["ready"]["inbound"] is True and "Retell" in data["agent_inbound"]["detail"], data
+    assert data["ready"]["outbound"] is False

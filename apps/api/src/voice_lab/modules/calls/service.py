@@ -140,34 +140,50 @@ async def apply_twilio_status(
 async def record_telephony_cost(
     call_id: uuid.UUID, call_sid: str, duration_s: int | None, telephony: TwilioTelephony, attempts: int = 6, delay_s: float = 20
 ) -> None:
-    """Twilio fills `price` asynchronously after the call ends; poll briefly for it."""
+    """Import Twilio's price for every leg of the call: the parent plus any child legs that
+    <Dial> created (the SIP leg to Retell). Twilio fills `price` asynchronously after the
+    call ends, so poll briefly; legs still unpriced at the end are recorded as unavailable."""
     events = EventRecorder(SessionLocal, call_id)
     usage = UsageRecorder(SessionLocal, events)
+    recorded: set[str] = set()
+    legs: dict[str, str] = {call_sid: "parent"}
     for attempt in range(attempts):
         try:
-            price = await telephony.fetch_price(call_sid)
+            for child in await telephony.child_call_sids(call_sid):
+                legs.setdefault(child, "child")
         except Exception as exc:
-            logger.warning("twilio price fetch failed: %s", type(exc).__name__)
-            price = None
-        if price and price.amount_usd is not None and price.unit == "USD":
+            logger.warning("twilio child-leg lookup failed: %s", type(exc).__name__)
+        for sid, leg in legs.items():
+            if sid in recorded:
+                continue
+            try:
+                price = await telephony.fetch_price(sid)
+            except Exception as exc:
+                logger.warning("twilio price fetch failed: %s", type(exc).__name__)
+                continue
+            if price.amount_usd is not None and price.unit == "USD":
+                await usage.record(
+                    provider="twilio",
+                    model="programmable-voice",
+                    operation_type="telephony",
+                    cost=CostResult(price.amount_usd, CostStatus.PROVIDER_REPORTED, "twilio-call-resource"),
+                    usage_source="provider_reported",
+                    audio_duration_ms=(price.duration_seconds or (duration_s if leg == "parent" else 0) or 0) * 1000,
+                    details={"price_unit": price.unit, "leg": leg, "call_sid": sid},
+                )
+                recorded.add(sid)
+        if len(recorded) == len(legs):
+            return
+        if attempt < attempts - 1:
+            await asyncio.sleep(delay_s)
+    for sid, leg in legs.items():
+        if sid not in recorded:
             await usage.record(
                 provider="twilio",
                 model="programmable-voice",
                 operation_type="telephony",
-                cost=CostResult(price.amount_usd, CostStatus.PROVIDER_REPORTED, "twilio-call-resource"),
+                cost=calculate_cost(None, {BillingDimension.CALL_SECONDS: duration_s or 0}),
                 usage_source="provider_reported",
-                audio_duration_ms=(price.duration_seconds or duration_s or 0) * 1000,
-                details={"price_unit": price.unit},
+                audio_duration_ms=((duration_s or 0) if leg == "parent" else 0) * 1000,
+                details={"leg": leg, "call_sid": sid, "note": "Twilio had not published the price yet; check the Twilio console."},
             )
-            return
-        if attempt < attempts - 1:
-            await asyncio.sleep(delay_s)
-    await usage.record(
-        provider="twilio",
-        model="programmable-voice",
-        operation_type="telephony",
-        cost=calculate_cost(None, {BillingDimension.CALL_SECONDS: duration_s or 0}),
-        usage_source="provider_reported",
-        audio_duration_ms=(duration_s or 0) * 1000,
-        details={"note": "Twilio had not published the price yet; check the Twilio console."},
-    )
