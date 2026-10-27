@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { CallSummary, DashboardStats } from "@voice-lab/shared";
-import { Card, Stat, StatusBadge } from "@/components/ui";
+import { CallsTable } from "@/components/calls-table";
+import { Card, Stat } from "@/components/ui";
 import { duration, num, usd } from "@/lib/format";
 import { apiJson } from "@/lib/server-api";
 
@@ -47,45 +48,11 @@ export default async function DashboardPage() {
       </div>
 
       <Card title="Recent calls">
-        {calls.length === 0 ? (
-          <p className="text-sm text-muted">No calls yet.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-left text-xs uppercase text-muted">
-                <tr>
-                  <th className="py-2">When</th>
-                  <th>Direction</th>
-                  <th>Number</th>
-                  <th>Engine / LLM</th>
-                  <th>Status</th>
-                  <th className="text-right">Duration</th>
-                  <th className="text-right">Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {calls.map((c) => (
-                  <tr key={c.id} className="border-t border-border">
-                    <td className="py-2">
-                      <Link href={`/calls/${c.id}`} className="underline-offset-2 hover:underline">
-                        {new Date(c.created_at).toLocaleString()}
-                      </Link>
-                    </td>
-                    <td>{c.direction}</td>
-                    <td className="tabular-nums">{c.to_number ?? c.from_number ?? "—"}</td>
-                    <td>
-                      {c.engine} / {c.llm_model}
-                    </td>
-                    <td>
-                      <StatusBadge status={c.status} />
-                    </td>
-                    <td className="text-right tabular-nums">{duration(c.duration_seconds)}</td>
-                    <td className="text-right tabular-nums">{usd(c.total_cost_usd)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <CallsTable calls={calls} />
+        {calls.length >= 25 && (
+          <Link href="/calls" className="mt-3 inline-block text-sm text-blue-600 hover:underline">
+            Full history →
+          </Link>
         )}
       </Card>
     </div>
