@@ -22,6 +22,8 @@ class SessionConfig(BaseModel):
     tts_provider: str | None = None
     tts_model: str | None = None
     tts_voice: str | None = None
+    s2s_model: str | None = None
+    retell_voice_id: str | None = None
     language: str | None = None
     greeting: str | None = Field(None, max_length=500)
     max_output_tokens: int | None = Field(None, ge=16, le=2000)

@@ -27,6 +27,7 @@ class ModelKind(StrEnum):
     TTS = "tts"
     SPEECH_TO_SPEECH = "speech_to_speech"
     TELEPHONY = "telephony"
+    MANAGED = "managed"
 
 
 class BillingDimension(StrEnum):
@@ -35,6 +36,7 @@ class BillingDimension(StrEnum):
     CACHE_WRITE_INPUT_TEXT_TOKENS = "cache_write_input_text_tokens"
     OUTPUT_TEXT_TOKENS = "output_text_tokens"
     INPUT_AUDIO_TOKENS = "input_audio_tokens"
+    CACHED_INPUT_AUDIO_TOKENS = "cached_input_audio_tokens"
     OUTPUT_AUDIO_TOKENS = "output_audio_tokens"
     AUDIO_INPUT_SECONDS = "audio_input_seconds"
     INPUT_CHARACTERS = "input_characters"

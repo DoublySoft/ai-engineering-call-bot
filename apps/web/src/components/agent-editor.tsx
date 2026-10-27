@@ -18,6 +18,8 @@ const EMPTY: AgentSettings = {
   tts_provider: null,
   tts_model: null,
   tts_voice: null,
+  s2s_model: null,
+  retell_voice_id: null,
   max_output_tokens: 300,
 };
 
@@ -38,6 +40,8 @@ export function AgentEditor({ id }: { id?: string }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [s, setS] = useState<AgentSettings>(EMPTY);
+  const [engine, setEngine] = useState<"pipeline" | "realtime">("pipeline");
+  const [voiceProvider, setVoiceProvider] = useState<"custom" | "retell">("custom");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -54,6 +58,8 @@ export function AgentEditor({ id }: { id?: string }) {
         setName(a.name);
         setDescription(a.description ?? "");
         setS({ ...a.settings, greeting: a.settings.greeting ?? "" });
+        setEngine(a.engine);
+        setVoiceProvider(a.voice_provider);
       })
       .catch(() => setError("Agent not found"));
   }, [id]);
@@ -77,8 +83,8 @@ export function AgentEditor({ id }: { id?: string }) {
     const body = {
       name,
       description: description || null,
-      engine: "pipeline",
-      voice_provider: "custom",
+      engine,
+      voice_provider: voiceProvider,
       settings: { ...s, greeting: s.greeting?.trim() ? s.greeting : null },
     };
     const res = await fetch(id ? `/api/lab/agents/${id}` : "/api/lab/agents", { method: id ? "PUT" : "POST", body: JSON.stringify(body) });
@@ -191,6 +197,60 @@ export function AgentEditor({ id }: { id?: string }) {
             <p className="mt-2 whitespace-pre-wrap">{meta.voice_rules}</p>
           </details>
         )}
+      </Card>
+
+      <Card title="Architecture">
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="text-sm">
+            Voice provider
+            <select className={`${field} mt-1`} value={voiceProvider} onChange={(e) => setVoiceProvider(e.target.value as "custom" | "retell")}>
+              <option value="custom">Custom (this lab)</option>
+              <option value="retell">Retell AI (managed, browser only)</option>
+            </select>
+          </label>
+          <label className="text-sm">
+            Conversation engine
+            <select
+              className={`${field} mt-1`}
+              value={engine}
+              disabled={voiceProvider === "retell"}
+              onChange={(e) => setEngine(e.target.value as "pipeline" | "realtime")}
+            >
+              <option value="pipeline">STT → LLM → TTS pipeline</option>
+              <option value="realtime">OpenAI Realtime (speech-to-speech)</option>
+            </select>
+          </label>
+          {engine === "realtime" && voiceProvider === "custom" && (
+            <label className="text-sm">
+              Realtime model
+              <select className={`${field} mt-1`} value={s.s2s_model ?? ""} onChange={(e) => setS({ ...s, s2s_model: e.target.value || null })}>
+                <option value="">Server default ({defaults.s2s_model})</option>
+                {catalog?.models
+                  .filter((m) => m.kind === "speech_to_speech")
+                  .map((m) => (
+                    <option key={m.key} value={m.model}>
+                      {m.display_name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
+          {voiceProvider === "retell" && (
+            <label className="text-sm">
+              Retell voice id
+              <input
+                className={`${field} mt-1`}
+                value={s.retell_voice_id ?? ""}
+                placeholder={`Server default (${defaults.retell_voice_id})`}
+                onChange={(e) => setS({ ...s, retell_voice_id: e.target.value || null })}
+              />
+            </label>
+          )}
+        </div>
+        <p className="mt-2 text-xs text-muted">
+          Pipeline uses the STT, LLM and TTS below. Realtime uses one OpenAI speech-to-speech model (the STT below only transcribes). Retell runs
+          the whole call with the LLM below (if Retell supports it).
+        </p>
       </Card>
 
       <Card title="Default models (can be overridden per call)">

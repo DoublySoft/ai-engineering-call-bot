@@ -56,6 +56,18 @@
 (`modules/agents/prompt.py`). El snapshot de la llamada guarda todo, incluido `agent: {id, name, version}`.
 Detalles de uso en [agents.md](agents.md).
 
+### Tres arquitecturas
+
+| | Pipeline | OpenAI Realtime | Retell |
+| --- | --- | --- | --- |
+| Quién detecta turnos | VAD propio | `server_vad` de OpenAI | Retell |
+| STT / LLM / TTS | separados e intercambiables | un modelo speech-to-speech | Retell (LLM mapeado) |
+| Transporte | navegador o Twilio | navegador o Twilio | WebRTC de Retell (solo navegador aquí) |
+| Coste | por componente | tokens de texto y audio | importe combinado reportado |
+| Código | `engines/pipeline.py` | `engines/realtime.py` | `modules/retell/` + `integrations/voice/retell/` |
+
+`modules/sessions/config.py` valida y pone precio solo a lo que cada arquitectura usa (`_parts_for`).
+
 ## Contratos principales
 
 ```python

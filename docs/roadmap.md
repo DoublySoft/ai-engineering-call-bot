@@ -8,9 +8,9 @@
 | 4. Browser voice chat | ✅ probado en vivo, también con micrófono real | ver [browser-voice.md](browser-voice.md) |
 | 4b. Agentes configurables | ✅ | instrucciones, conocimiento, saludo, modelos; versionados. Ver [agents.md](agents.md) |
 | 5. Inbound | — | webhook `/twilio/voice` → `VoiceAgent.inbound_number` → mismo `<Connect><Stream>` |
-| 6. OpenAI Realtime | — | `RealtimeEngine` (otro `ConversationEngine`, turn detection del proveedor) |
-| 7. Retell AI | — | `RetellVoiceProvider`; Twilio vía el mecanismo oficial de Retell, sin duplicar gestión de la llamada |
-| 8. Observabilidad avanzada | — | exportar spans a OpenTelemetry, comparativas por modelo/proveedor |
+| 6. OpenAI Realtime | ✅ probado en vivo | ver [realtime.md](realtime.md) |
+| 7. Retell AI | ✅ llamadas web; ⏳ falta probar una llamada con micrófono | ver [retell.md](retell.md); el teléfono vía Retell+Twilio queda fuera (Twilio) |
+| 8. Observabilidad avanzada | ✅ | OpenTelemetry + `/analytics`; ver [observability.md](observability.md) |
 
 ## Pendiente conocido de Fase 4
 

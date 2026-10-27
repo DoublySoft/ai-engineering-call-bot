@@ -30,6 +30,8 @@ class AgentSettings(BaseModel):
     tts_provider: str | None = None
     tts_model: str | None = None
     tts_voice: str | None = None
+    s2s_model: str | None = None  # engine "realtime"
+    retell_voice_id: str | None = None  # voice provider "retell"
     max_output_tokens: int = Field(300, ge=16, le=2000)
 
     @field_validator("language", mode="before")

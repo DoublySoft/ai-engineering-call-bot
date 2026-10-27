@@ -16,8 +16,8 @@ def test_defaults_are_filled_from_settings() -> None:
 @pytest.mark.parametrize(
     "override, message",
     [
-        ({"engine": "realtime"}, "not implemented"),
-        ({"voice_provider": "retell"}, "not implemented"),
+        ({"engine": "realtime", "s2s_model": "tts-1"}, "not a known speech_to_speech"),
+        ({"voice_provider": "retell", "llm_model": "gpt-4o-mini"}, "Retell can't run"),
         ({"llm_provider": "openai", "llm_model": "claude-sonnet-5-5"}, "not a known llm"),
         ({"llm_model": "gpt-transcribe"}, "not a known llm"),
         ({"tts_model": "made-up-tts"}, "not a known tts"),
@@ -49,3 +49,15 @@ def test_phone_numbers_are_normalized_and_validated() -> None:
 def test_anthropic_models_are_selectable() -> None:
     cfg = resolve_config(SessionConfig(llm_provider="anthropic", llm_model="claude-haiku-5-5"), get_settings())
     assert cfg["llm_provider"] == "anthropic" and cfg["llm_model"] == "claude-haiku-5-5"
+
+
+def test_realtime_validates_only_its_models() -> None:
+    cfg = resolve_config(SessionConfig(engine="realtime"), get_settings())
+    assert cfg["s2s_model"] == get_settings().s2s_model
+    snap = pricing_snapshot(cfg)
+    assert set(snap) == {"s2s", "stt"} and snap["s2s"]["verified"] is True
+
+
+def test_retell_maps_llm_and_skips_pipeline_pricing() -> None:
+    cfg = resolve_config(SessionConfig(voice_provider="retell", llm_provider="anthropic", llm_model="claude-haiku-5-5"), get_settings())
+    assert cfg["retell_voice_id"] and pricing_snapshot(cfg) == {"retell": "provider_reported"}

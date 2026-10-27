@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CallDetail, CallEventRow, LiveMessage, Role } from "@voice-lab/shared";
 import { BrowserVoicePanel } from "@/components/browser-voice-panel";
+import { RetellPanel } from "@/components/retell-panel";
 import { Card, StatusBadge } from "@/components/ui";
 import { STATUS_LABEL, duration, num, usd } from "@/lib/format";
 
@@ -16,7 +17,12 @@ interface Line {
 }
 
 const TERMINAL = new Set(["completed", "failed", "busy", "no-answer", "canceled"]);
-const OPS = ["stt", "llm", "tts", "telephony"] as const;
+const OPS_BY_ARCH: Record<string, readonly string[]> = {
+  pipeline: ["stt", "llm", "tts", "telephony"],
+  realtime: ["s2s", "stt", "telephony"],
+  retell: ["managed"],
+};
+const OP_LABEL: Record<string, string> = { s2s: "S2S", managed: "Retell (all-in)" };
 
 export function CallView({ id, wsBase }: { id: string; wsBase: string }) {
   const [detail, setDetail] = useState<CallDetail | null>(null);
@@ -92,6 +98,7 @@ export function CallView({ id, wsBase }: { id: string; wsBase: string }) {
   if (!detail || !call) return <p className="text-sm text-muted">Loading…</p>;
 
   const cfg = call.config_snapshot;
+  const arch = cfg.voice_provider === "retell" ? "retell" : cfg.engine === "realtime" ? "realtime" : "pipeline";
   const agentInfo = (call.config_snapshot as unknown as { agent?: { id: string; name: string; version: number } }).agent;
   const elapsed = call.duration_seconds ?? (call.answered_at ? Math.max(0, (new Date(call.ended_at ?? now).getTime() - new Date(call.answered_at).getTime()) / 1000) : null);
   const byOp = detail.cost_by_operation;
@@ -117,7 +124,10 @@ export function CallView({ id, wsBase }: { id: string; wsBase: string }) {
         )}
       </div>
 
-      {call.direction === "browser" && (call.status === "ready" || call.status === "in-progress") && (
+      {call.direction === "browser" && cfg.voice_provider === "retell" && (call.status === "ready" || call.status === "in-progress") && (
+        <RetellPanel callId={id} onChanged={scheduleRefetch} />
+      )}
+      {call.direction === "browser" && cfg.voice_provider !== "retell" && (call.status === "ready" || call.status === "in-progress") && (
         <BrowserVoicePanel callId={id} wsBase={wsBase} onEnded={scheduleRefetch} />
       )}
 
@@ -136,20 +146,38 @@ export function CallView({ id, wsBase }: { id: string; wsBase: string }) {
                 "—"
               )}
             </dd>
-            <dt className="text-muted">Engine</dt>
-            <dd>{cfg.engine}</dd>
-            <dt className="text-muted">Voice provider</dt>
-            <dd>{cfg.voice_provider}</dd>
-            <dt className="text-muted">LLM</dt>
-            <dd>
-              {cfg.llm_provider}:{cfg.llm_model}
-            </dd>
-            <dt className="text-muted">STT</dt>
-            <dd>{cfg.stt_model}</dd>
-            <dt className="text-muted">TTS</dt>
-            <dd>
-              {cfg.tts_model} ({cfg.tts_voice})
-            </dd>
+            <dt className="text-muted">Architecture</dt>
+            <dd>{arch === "retell" ? "Retell (managed)" : arch === "realtime" ? "OpenAI Realtime" : "STT → LLM → TTS"}</dd>
+            {arch === "realtime" ? (
+              <>
+                <dt className="text-muted">Model</dt>
+                <dd>{cfg.s2s_model}</dd>
+                <dt className="text-muted">Transcription</dt>
+                <dd>{cfg.stt_model}</dd>
+                <dt className="text-muted">Voice</dt>
+                <dd>{cfg.tts_voice}</dd>
+              </>
+            ) : arch === "retell" ? (
+              <>
+                <dt className="text-muted">LLM (on Retell)</dt>
+                <dd>{cfg.llm_model}</dd>
+                <dt className="text-muted">Voice</dt>
+                <dd>{cfg.retell_voice_id}</dd>
+              </>
+            ) : (
+              <>
+                <dt className="text-muted">LLM</dt>
+                <dd>
+                  {cfg.llm_provider}:{cfg.llm_model}
+                </dd>
+                <dt className="text-muted">STT</dt>
+                <dd>{cfg.stt_model}</dd>
+                <dt className="text-muted">TTS</dt>
+                <dd>
+                  {cfg.tts_model} ({cfg.tts_voice})
+                </dd>
+              </>
+            )}
           </dl>
           {call.error && <p className="mt-3 rounded bg-red-500/10 p-2 text-xs text-red-600">{call.error}</p>}
         </Card>
@@ -162,9 +190,9 @@ export function CallView({ id, wsBase }: { id: string; wsBase: string }) {
             <dd className="tabular-nums">{num(tokens.cached_tokens)}</dd>
             <dt className="text-muted">Output tokens</dt>
             <dd className="tabular-nums">{num(tokens.output_tokens)}</dd>
-            {OPS.map((op) => (
+            {OPS_BY_ARCH[arch].map((op) => (
               <div key={op} className="contents">
-                <dt className="text-muted">{op.toUpperCase()} cost</dt>
+                <dt className="text-muted">{OP_LABEL[op] ?? op.toUpperCase()} cost</dt>
                 <dd className="tabular-nums">
                   {byOp[op] ? usd(byOp[op].cost_usd, 5) : "—"}{" "}
                   {byOp[op] && <span className="text-xs text-muted">({byOp[op].statuses.map((s) => STATUS_LABEL[s]).join(", ")})</span>}
@@ -176,7 +204,7 @@ export function CallView({ id, wsBase }: { id: string; wsBase: string }) {
           </dl>
         </Card>
 
-        <Card title="Latency (server-side)" className="lg:col-span-1">
+        <Card title={`Latency (${metrics?.latency_source ?? "measured server-side"})`} className="lg:col-span-1">
           {metrics ? (
             <dl className="grid grid-cols-2 gap-y-1 text-sm">
               {[
@@ -185,8 +213,11 @@ export function CallView({ id, wsBase }: { id: string; wsBase: string }) {
                 ["LLM first token", metrics.avg_llm_ttft_ms],
                 ["LLM total", metrics.avg_llm_ms],
                 ["TTS first byte", metrics.avg_tts_first_byte_ms],
+                ["S2S response", metrics.avg_response_ms],
                 ["Speech end → first audio", metrics.avg_time_to_first_audio_ms],
-              ].map(([label, value]) => (
+              ]
+                .filter(([, value]) => value !== undefined)
+                .map(([label, value]) => (
                 <div key={String(label)} className="contents">
                   <dt className="text-muted">{label}</dt>
                   <dd className="tabular-nums">{value ?? "—"}{typeof value === "number" && label !== "Turns" ? " ms" : ""}</dd>

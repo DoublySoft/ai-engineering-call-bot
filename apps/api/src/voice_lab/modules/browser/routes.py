@@ -67,6 +67,8 @@ async def browser_token(call_id: uuid.UUID, db: AsyncSession = Depends(get_db)) 
         raise HTTPException(404)
     if call.status != "ready":
         raise HTTPException(409, f"session is {call.status}; start a new browser session")
+    if call.config_snapshot.get("voice_provider") == "retell":
+        raise HTTPException(409, "Retell sessions connect through /retell-web-call")
     call.stream_token = new_stream_token()
     await db.commit()
     return {

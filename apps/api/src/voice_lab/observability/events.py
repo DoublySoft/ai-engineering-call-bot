@@ -12,9 +12,11 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+from opentelemetry import trace
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from voice_lab.core.logging import log
+from voice_lab.core.telemetry import tracer
 from voice_lab.observability.hub import hub
 from voice_lab.persistence.models import CallEvent
 
@@ -79,9 +81,25 @@ class EventRecorder:
         await self.emit(f"{prefix}.started", correlation_id=correlation_id, provider=provider, model=model, **data)
         result: dict[str, Any] = {}
         start = time.perf_counter()
+        otel = tracer.start_span(
+            f"voice.{prefix}",
+            attributes={
+                "voice.call_id": str(self.call_id),
+                "voice.session_id": str(self.session_id) if self.session_id else "",
+                "voice.correlation_id": correlation_id,
+                "gen_ai.system": provider,
+                "gen_ai.request.model": model,
+            },
+        )
         try:
             yield result
-        except Exception as exc:
+        except BaseException as exc:
+            otel.record_exception(exc)
+            otel.set_status(trace.Status(trace.StatusCode.ERROR, type(exc).__name__))
+            otel.end()
+            if not isinstance(exc, Exception):
+                raise
+
             await self.emit(
                 f"{prefix}.failed",
                 correlation_id=correlation_id,
@@ -91,6 +109,8 @@ class EventRecorder:
                 error=type(exc).__name__,
             )
             raise
+        otel.set_attributes({f"voice.{k}": v for k, v in result.items() if isinstance(v, (str, int, float, bool))})
+        otel.end()
         await self.emit(
             f"{prefix}.completed",
             correlation_id=correlation_id,

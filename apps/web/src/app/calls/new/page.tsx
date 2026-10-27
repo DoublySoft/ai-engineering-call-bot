@@ -9,13 +9,13 @@ import { Card } from "@/components/ui";
 type Modality = "outbound" | "browser";
 
 const ENGINES = [
-  { id: "pipeline", label: "STT → LLM → TTS pipeline", phase: null },
-  { id: "realtime", label: "OpenAI Realtime (speech-to-speech)", phase: "Phase 6" },
+  { id: "pipeline", label: "STT → LLM → TTS pipeline" },
+  { id: "realtime", label: "OpenAI Realtime (speech-to-speech)" },
 ] as const;
 
 const VOICE_PROVIDERS = [
-  { id: "custom", label: "Custom (this lab)", phase: null },
-  { id: "retell", label: "Retell AI (managed)", phase: "Phase 7" },
+  { id: "custom", label: "Custom (this lab)" },
+  { id: "retell", label: "Retell AI (managed, browser only)" },
 ] as const;
 
 function priceLabel(m: CatalogModel): string {
@@ -23,12 +23,13 @@ function priceLabel(m: CatalogModel): string {
   if (!p) return "no price";
   const price = (dimension: string) => p.components.find((c) => c.dimension === dimension)?.price_usd;
   if (m.kind === "llm") return `$${price("input_text_tokens")} in / $${price("output_text_tokens")} out per 1M tokens`;
+  if (m.kind === "speech_to_speech") return `audio $${price("input_audio_tokens")} in / $${price("output_audio_tokens")} out per 1M tokens`;
   const first = p.components[0];
   return `$${first.price_usd}/${first.unit.replace("usd_per_", "").replaceAll("_", " ")}${p.approximate ? " est." : ""}`;
 }
 
-function notReady(catalog: Catalog, modality: Modality): string[] {
-  const needed = modality === "outbound" ? ["twilio", "public_base_url", "openai"] : ["openai"];
+function notReady(catalog: Catalog, modality: Modality, voiceProvider = "custom"): string[] {
+  const needed = modality === "outbound" ? ["twilio", "public_base_url", "openai"] : voiceProvider === "retell" ? ["retell"] : ["openai"];
   return needed.filter((k) => !catalog.readiness[k]);
 }
 
@@ -50,6 +51,8 @@ export default function NewCallPage() {
     stt: "",
     tts: "",
     tts_voice: "",
+    s2s: "",
+    retell_voice_id: "",
   });
 
   useEffect(() => {
@@ -88,6 +91,8 @@ export default function NewCallPage() {
       stt: `${eff.stt_provider}:${eff.stt_model}`,
       tts: `${eff.tts_provider}:${eff.tts_model}`,
       tts_voice: String(eff.tts_voice ?? ""),
+      s2s: String(eff.s2s_model ?? ""),
+      retell_voice_id: String(eff.retell_voice_id ?? ""),
     }));
   }
 
@@ -104,7 +109,10 @@ export default function NewCallPage() {
 
   const llmProviders = useMemo(() => [...new Set(byKind.llm.map((m) => m.provider)).add("anthropic")], [byKind]);
   const [llmProvider] = form.llm.split(":");
-  const pipeline = form.engine === "pipeline";
+  const retell = form.voice_provider === "retell";
+  const realtime = !retell && form.engine === "realtime";
+  const pipeline = !retell && form.engine === "pipeline";
+  const retellModels = new Set(catalog?.retell.llm_models ?? []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -119,6 +127,8 @@ export default function NewCallPage() {
       config[`${part}_model`] = model;
     }
     if (overridden.has("tts_voice")) config.tts_voice = form.tts_voice;
+    if (overridden.has("s2s")) config.s2s_model = form.s2s;
+    if (overridden.has("retell_voice_id")) config.retell_voice_id = form.retell_voice_id;
     if (overridden.has("engine")) config.engine = form.engine;
     if (overridden.has("voice_provider")) config.voice_provider = form.voice_provider;
     const res = await fetch(modality === "browser" ? "/api/lab/browser-sessions" : "/api/lab/calls", {
@@ -140,10 +150,10 @@ export default function NewCallPage() {
     <form onSubmit={submit} className="mx-auto max-w-2xl space-y-4">
       <h1 className="text-xl font-semibold">New call</h1>
 
-      {catalog && notReady(catalog, modality).length > 0 && (
+      {catalog && notReady(catalog, modality, form.voice_provider).length > 0 && (
         <Card className="border-amber-500/50">
           <p className="text-sm">
-            Not ready for {modality === "outbound" ? "phone calls" : "browser sessions"}: {notReady(catalog, modality).join(", ")}. See{" "}
+            Not ready for {modality === "outbound" ? "phone calls" : "browser sessions"}: {notReady(catalog, modality, form.voice_provider).join(", ")}. See{" "}
             <code>docs/first-call.md</code>.
           </p>
         </Card>
@@ -207,20 +217,24 @@ export default function NewCallPage() {
             Voice provider
             <select className={`${field} mt-1`} value={form.voice_provider} onChange={(e) => change("voice_provider", e.target.value)}>
               {VOICE_PROVIDERS.map((p) => (
-                <option key={p.id} value={p.id} disabled={!!p.phase}>
+                <option key={p.id} value={p.id} disabled={p.id === "retell" && modality === "outbound"}>
                   {p.label}
-                  {p.phase ? ` — ${p.phase}` : ""}
                 </option>
               ))}
             </select>
           </label>
           <label className="text-sm">
             Conversation engine
-            <select className={`${field} mt-1`} value={form.engine} onChange={(e) => change("engine", e.target.value)}>
+            <select
+              className={`${field} mt-1`}
+              value={retell ? "" : form.engine}
+              disabled={retell}
+              onChange={(e) => change("engine", e.target.value)}
+            >
+              {retell && <option value="">Managed by Retell</option>}
               {ENGINES.map((p) => (
-                <option key={p.id} value={p.id} disabled={!!p.phase}>
+                <option key={p.id} value={p.id}>
                   {p.label}
-                  {p.phase ? ` — ${p.phase}` : ""}
                 </option>
               ))}
             </select>
@@ -291,6 +305,73 @@ export default function NewCallPage() {
               </select>
             </label>
           </div>
+        </Card>
+      )}
+
+      {realtime && (
+        <Card title="Speech-to-speech (pre-filled from the agent; changes apply to this call only)">
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="text-sm">
+              Realtime model
+              <select className={`${field} mt-1`} value={form.s2s} onChange={(e) => change("s2s", e.target.value)}>
+                {catalog?.models
+                  .filter((m) => m.kind === "speech_to_speech")
+                  .map((m) => (
+                    <option key={m.key} value={m.model}>
+                      {m.display_name} ({priceLabel(m)})
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label className="text-sm">
+              Input transcription (for the transcript)
+              <select className={`${field} mt-1`} value={form.stt} onChange={(e) => change("stt", e.target.value)}>
+                {byKind.stt.map((m) => (
+                  <option key={m.key} value={m.key}>
+                    {m.display_name} ({priceLabel(m)})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm">
+              Voice
+              <select className={`${field} mt-1`} value={form.tts_voice} onChange={(e) => change("tts_voice", e.target.value)}>
+                {!catalog?.realtime_voices.includes(form.tts_voice) && <option value={form.tts_voice}>{form.tts_voice} (not a Realtime voice → marin)</option>}
+                {catalog?.realtime_voices.map((v) => (
+                  <option key={v}>{v}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <p className="mt-2 text-xs text-muted">OpenAI does turn detection, transcription, reasoning and voice in one session. Anthropic can&apos;t run here.</p>
+        </Card>
+      )}
+
+      {retell && (
+        <Card title="Retell (pre-filled from the agent; changes apply to this call only)">
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="text-sm">
+              LLM (run and billed by Retell)
+              <select className={`${field} mt-1`} value={form.llm} onChange={(e) => change("llm", e.target.value)}>
+                {!retellModels.has(form.llm.split(":")[1]) && <option value={form.llm}>{form.llm.split(":")[1]} — not available on Retell</option>}
+                {byKind.llm
+                  .filter((m) => retellModels.has(m.model))
+                  .map((m) => (
+                    <option key={m.key} value={m.key}>
+                      {m.display_name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label className="text-sm">
+              Retell voice id
+              <input className={`${field} mt-1`} value={form.retell_voice_id} onChange={(e) => change("retell_voice_id", e.target.value)} />
+            </label>
+          </div>
+          <p className="mt-2 text-xs text-muted">
+            Retell handles STT, LLM, voice and audio. The lab creates a Retell agent from this agent (reused while nothing changes) and imports
+            Retell&apos;s reported cost and latency after the call. Data storage at Retell: {catalog?.retell.data_storage}.
+          </p>
         </Card>
       )}
 
