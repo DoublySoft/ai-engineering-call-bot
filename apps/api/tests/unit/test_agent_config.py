@@ -49,9 +49,26 @@ def test_greeting_none_override_means_silent_start() -> None:
     assert resolve_config(SessionConfig(), get_settings(), AGENT)["greeting"] == "Clínica Sonrisa, ¿dígame?"
 
 
-def test_unknown_language_is_rejected() -> None:
-    with pytest.raises(ValueError):
-        AgentSettings(language="xx")
+@pytest.mark.parametrize("stored", ["ja", "nl", "Spanish", ""])
+def test_legacy_stored_languages_still_load(stored: str) -> None:
+    # Versions saved before agents existed could hold any language string.
+    cfg = resolve_config(SessionConfig(), get_settings(), {**AGENT, "language": stored})
+    assert cfg["language"] == (stored or "es")
+    assert "# Tu papel" in cfg["system_prompt"]
+
+
+@pytest.mark.parametrize("language, ok", [("ja", True), ("pt-BR", True), ("Spanish", False), ("es!", False)])
+def test_new_versions_need_a_language_code(language: str, ok: bool) -> None:
+    from pydantic import ValidationError
+
+    from voice_lab.modules.agents.schemas import AgentWrite
+
+    payload = {"name": "A", "settings": {"language": language}}
+    if ok:
+        assert AgentWrite.model_validate(payload).settings.language == language
+    else:
+        with pytest.raises(ValidationError):
+            AgentWrite.model_validate(payload)
 
 
 def test_unrunnable_agent_is_rejected() -> None:

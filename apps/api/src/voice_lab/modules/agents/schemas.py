@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Literal
@@ -31,17 +32,20 @@ class AgentSettings(BaseModel):
     tts_voice: str | None = None
     max_output_tokens: int = Field(300, ge=16, le=2000)
 
-    @field_validator("language")
+    @field_validator("language", mode="before")
     @classmethod
-    def _known_language(cls, v: str) -> str:
-        if v not in LANGUAGES:
-            raise ValueError(f"language must be one of {', '.join(LANGUAGES)}")
-        return v
+    def _blank_language_is_default(cls, v: object) -> object:
+        # Lenient on purpose: stored versions may hold any language value accepted before
+        # agents existed (e.g. "ja" from AGENT_LANGUAGE). Writes are checked in AgentWrite.
+        return v if isinstance(v, str) and v.strip() else "es"
 
     @field_validator("greeting")
     @classmethod
     def _blank_greeting_is_none(cls, v: str | None) -> str | None:
         return v.strip() or None if v is not None else None
+
+
+LANGUAGE_CODE = re.compile(r"^[a-z]{2,3}(-[A-Za-z]{2,4})?$")
 
 
 class AgentWrite(BaseModel):
@@ -57,6 +61,14 @@ class AgentWrite(BaseModel):
         if not v.strip():
             raise ValueError("name is required")
         return v.strip()
+
+    @field_validator("settings")
+    @classmethod
+    def _language_code(cls, v: AgentSettings) -> AgentSettings:
+        # Any ISO 639 code is fine (the editor lists common ones); free text is not.
+        if not LANGUAGE_CODE.match(v.language):
+            raise ValueError("language must be an ISO 639 code such as 'es', 'en' or 'pt-BR'")
+        return v
 
 
 class AgentVersion(BaseModel):

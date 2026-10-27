@@ -99,3 +99,34 @@ def test_default_and_archive(client: TestClient) -> None:
     # Sessions without agent_id use the new default.
     call_id = client.post("/api/browser-sessions", headers=ADMIN, json={}).json()["id"]
     assert client.get(f"/api/calls/{call_id}", headers=ADMIN).json()["call"]["config_snapshot"]["agent"]["name"] == "Recepción F"
+
+
+def test_agent_with_legacy_language_stays_usable(client: TestClient) -> None:
+    import uuid
+
+    from sqlalchemy import update
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    from voice_lab.core.config import get_settings
+    from voice_lab.persistence.models import VoiceAgentConfiguration
+
+    agent = _create(client, name="Recepción legado")
+    own = async_sessionmaker(create_async_engine(get_settings().database_url, poolclass=NullPool))
+
+    async def make_legacy() -> None:  # simulate a version stored before languages were validated
+        async with own() as db:
+            cfg_id = uuid.UUID(agent["configuration_id"])
+            row = await db.get(VoiceAgentConfiguration, cfg_id)
+            await db.execute(
+                update(VoiceAgentConfiguration)
+                .where(VoiceAgentConfiguration.id == cfg_id)
+                .values(settings={**row.settings, "language": "Japanese"})
+            )
+            await db.commit()
+
+    asyncio.run(make_legacy())
+    assert client.get("/api/agents", headers=ADMIN).status_code == 200
+    assert client.get(f"/api/agents/{agent['id']}", headers=ADMIN).json()["settings"]["language"] == "Japanese"
+    r = client.post("/api/browser-sessions", headers=ADMIN, json={"config": {"agent_id": agent["id"]}})
+    assert r.status_code == 201, r.text

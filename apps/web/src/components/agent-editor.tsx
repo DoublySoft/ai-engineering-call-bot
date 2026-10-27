@@ -180,6 +180,8 @@ export function AgentEditor({ id }: { id?: string }) {
                   {label}
                 </option>
               ))}
+              {/* Versions saved earlier may use a language outside the list; keep it visible. */}
+              {meta && !(s.language in meta.languages) && <option value={s.language}>{s.language}</option>}
             </select>
           </label>
         </div>
