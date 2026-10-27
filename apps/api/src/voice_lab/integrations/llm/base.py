@@ -12,8 +12,10 @@ class ChatMessage:
 @dataclass
 class LLMUsage:
     input_tokens: int | None = None  # uncached input tokens
-    cached_tokens: int | None = None
-    output_tokens: int | None = None
+    cached_tokens: int | None = None  # cache reads
+    output_tokens: int | None = None  # includes reasoning tokens where the provider bills them as output
+    cache_write_tokens: int | None = None  # None: provider has no separate cache-write charge
+    served_by_model: str | None = None  # set when a provider-side fallback answered instead
 
 
 @dataclass

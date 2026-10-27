@@ -34,7 +34,7 @@ export default async function DashboardPage() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat label="Outbound calls" value={stats.calls.outbound} />
         <Stat label="Inbound calls" value={stats.calls.inbound} hint="Phase 5" />
-        <Stat label="Browser sessions" value={stats.calls.browser} hint="Phase 4" />
+        <Stat label="Browser sessions" value={stats.calls.browser} />
         <Stat label="Active sessions" value={stats.active_sessions} />
         <Stat label="Total duration" value={duration(stats.total_duration_seconds)} />
         <Stat label="Input tokens" value={num(stats.tokens.input)} />

@@ -32,6 +32,7 @@ class ModelKind(StrEnum):
 class BillingDimension(StrEnum):
     INPUT_TEXT_TOKENS = "input_text_tokens"
     CACHED_INPUT_TEXT_TOKENS = "cached_input_text_tokens"
+    CACHE_WRITE_INPUT_TEXT_TOKENS = "cache_write_input_text_tokens"
     OUTPUT_TEXT_TOKENS = "output_text_tokens"
     INPUT_AUDIO_TOKENS = "input_audio_tokens"
     OUTPUT_AUDIO_TOKENS = "output_audio_tokens"

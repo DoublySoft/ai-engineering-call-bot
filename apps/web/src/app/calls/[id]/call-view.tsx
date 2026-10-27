@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CallDetail, CallEventRow, LiveMessage, Role } from "@voice-lab/shared";
+import { BrowserVoicePanel } from "@/components/browser-voice-panel";
 import { Card, StatusBadge } from "@/components/ui";
 import { STATUS_LABEL, duration, num, usd } from "@/lib/format";
 
@@ -104,15 +105,19 @@ export function CallView({ id, wsBase }: { id: string; wsBase: string }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold">{call.to_number ?? call.direction}</h1>
+        <h1 className="text-xl font-semibold">{call.to_number ?? (call.direction === "browser" ? "Browser session" : call.direction)}</h1>
         <StatusBadge status={call.status} />
         <span className={`text-xs ${connected ? "text-green-600" : "text-muted"}`}>● {connected ? "live" : "offline"}</span>
-        {active && (
+        {active && call.direction !== "browser" && (
           <button onClick={hangup} className="ml-auto rounded-md border border-red-500/50 px-3 py-1 text-sm text-red-600">
             Hang up
           </button>
         )}
       </div>
+
+      {call.direction === "browser" && (call.status === "ready" || call.status === "in-progress") && (
+        <BrowserVoicePanel callId={id} wsBase={wsBase} onEnded={scheduleRefetch} />
+      )}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Call" className="lg:col-span-1">

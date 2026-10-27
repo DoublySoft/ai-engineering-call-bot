@@ -3,8 +3,6 @@
 Run with: uv run pytest -m manual tests/manual -s
 """
 
-import os
-
 import numpy as np
 import pytest
 
@@ -20,13 +18,11 @@ pytestmark = pytest.mark.manual
 def client():  # type: ignore[no-untyped-def]
     from openai import AsyncOpenAI
 
-    from voice_lab.core.config import Settings
+    from tests.conftest import REAL_KEYS
 
-    key = Settings().openai_api_key
-    if not key or key.startswith("sk-test"):
-        pytest.skip("real OPENAI_API_KEY not configured")
-    os.environ["OPENAI_API_KEY"] = key
-    return AsyncOpenAI(api_key=key)
+    if not REAL_KEYS["openai"]:
+        pytest.skip("OPENAI_API_KEY not configured in .env")
+    return AsyncOpenAI(api_key=REAL_KEYS["openai"])
 
 
 async def test_tts_then_stt_roundtrip(client) -> None:  # type: ignore[no-untyped-def]

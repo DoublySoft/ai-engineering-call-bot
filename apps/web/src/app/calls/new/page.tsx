@@ -20,10 +20,15 @@ const VOICE_PROVIDERS = [
 function priceLabel(m: CatalogModel): string {
   const p = m.pricing[m.pricing.length - 1];
   if (!p) return "no price";
-  return p.components
-    .map((c) => `$${c.price_usd}/${c.unit.replace("usd_per_", "").replace("_", " ")}`)
-    .slice(0, 2)
-    .join(", ");
+  const price = (dimension: string) => p.components.find((c) => c.dimension === dimension)?.price_usd;
+  if (m.kind === "llm") return `$${price("input_text_tokens")} in / $${price("output_text_tokens")} out per 1M tokens`;
+  const first = p.components[0];
+  return `$${first.price_usd}/${first.unit.replace("usd_per_", "").replaceAll("_", " ")}${p.approximate ? " est." : ""}`;
+}
+
+function notReady(catalog: Catalog, modality: Modality): string[] {
+  const needed = modality === "outbound" ? ["twilio", "public_base_url", "openai"] : ["openai"];
+  return needed.filter((k) => !catalog.readiness[k]);
 }
 
 export default function NewCallPage() {
@@ -73,14 +78,13 @@ export default function NewCallPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (modality === "browser") return;
     setBusy(true);
     const [stt_provider, stt_model] = form.stt.split(":");
     const [tts_provider, tts_model] = form.tts.split(":");
-    const res = await fetch("/api/lab/calls", {
+    const res = await fetch(modality === "browser" ? "/api/lab/browser-sessions" : "/api/lab/calls", {
       method: "POST",
       body: JSON.stringify({
-        to: form.to,
+        ...(modality === "outbound" ? { to: form.to } : {}),
         config: {
           voice_provider: form.voice_provider,
           engine: form.engine,
@@ -110,15 +114,11 @@ export default function NewCallPage() {
     <form onSubmit={submit} className="mx-auto max-w-2xl space-y-4">
       <h1 className="text-xl font-semibold">New call</h1>
 
-      {catalog && Object.entries(catalog.readiness).some(([k, v]) => !v && k !== "anthropic") && (
+      {catalog && notReady(catalog, modality).length > 0 && (
         <Card className="border-amber-500/50">
           <p className="text-sm">
-            Not ready for real calls:{" "}
-            {Object.entries(catalog.readiness)
-              .filter(([k, v]) => !v && k !== "anthropic")
-              .map(([k]) => k)
-              .join(", ")}
-            . See <code>docs/first-call.md</code>.
+            Not ready for {modality === "outbound" ? "phone calls" : "browser sessions"}: {notReady(catalog, modality).join(", ")}. See{" "}
+            <code>docs/first-call.md</code>.
           </p>
         </Card>
       )}
@@ -132,7 +132,7 @@ export default function NewCallPage() {
               onClick={() => setModality(m)}
               className={`rounded-md border px-3 py-1.5 text-sm ${modality === m ? "border-foreground" : "border-border text-muted"}`}
             >
-              {m === "outbound" ? "Outbound phone call" : "Browser (Phase 4)"}
+              {m === "outbound" ? "Outbound phone call" : "Browser (microphone)"}
             </button>
           ))}
         </div>
@@ -249,10 +249,10 @@ export default function NewCallPage() {
 
       <button
         type="submit"
-        disabled={busy || !catalog || modality === "browser" || !form.to}
+        disabled={busy || !catalog || (modality === "outbound" && !form.to)}
         className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background disabled:opacity-40"
       >
-        {busy ? "Dialing…" : modality === "browser" ? "Browser mode arrives in Phase 4" : "Start call"}
+        {busy ? "Starting…" : modality === "browser" ? "Create browser session" : "Start call"}
       </button>
     </form>
   );

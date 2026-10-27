@@ -25,6 +25,7 @@ export interface PricingVersion {
   components: PriceComponent[];
   source_url: string | null;
   verified: boolean;
+  approximate: boolean;
   notes: string | null;
 }
 
@@ -46,6 +47,7 @@ export interface Catalog {
   defaults: Record<string, string>;
   outbound_allowlist: string[];
   voices: string[];
+  browser_audio: { input_sample_rate: number; output_sample_rate: number };
   readiness: Record<string, boolean>;
 }
 

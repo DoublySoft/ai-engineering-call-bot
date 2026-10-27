@@ -25,6 +25,7 @@ from voice_lab.catalog.schemas import (
 )
 
 OPENAI_PRICING_URL = "https://developers.openai.com/api/docs/pricing"
+ANTHROPIC_PRICING_URL = "https://platform.claude.com/docs/en/about-claude/pricing"
 VERIFIED_ON = date(2026, 10, 27)
 
 
@@ -58,12 +59,50 @@ def _llm(model: str, name: str, inp: str, cached: str, out: str, **kw: object) -
     )
 
 
+def _claude(model: str, name: str, inp: str, write_5m: str, read: str, out: str, notes: str | None = None) -> ModelDefinition:
+    return ModelDefinition(
+        provider=ModelProvider.ANTHROPIC,
+        model=model,
+        kind=ModelKind.LLM,
+        display_name=name,
+        capabilities=Capabilities(supports_streaming=True, supports_tool_calling=True, reports_usage=True),
+        context_window=1_000_000,
+        pricing=[
+            PricingVersion(
+                version=f"anthropic-{VERIFIED_ON.isoformat()}",
+                effective_from=VERIFIED_ON,
+                components=[
+                    PriceComponent(dimension=D.INPUT_TEXT_TOKENS, unit=U.USD_PER_1M_TOKENS, price_usd=Decimal(inp)),
+                    PriceComponent(dimension=D.CACHE_WRITE_INPUT_TEXT_TOKENS, unit=U.USD_PER_1M_TOKENS, price_usd=Decimal(write_5m)),
+                    PriceComponent(dimension=D.CACHED_INPUT_TEXT_TOKENS, unit=U.USD_PER_1M_TOKENS, price_usd=Decimal(read)),
+                    PriceComponent(dimension=D.OUTPUT_TEXT_TOKENS, unit=U.USD_PER_1M_TOKENS, price_usd=Decimal(out)),
+                ],
+                source_url=ANTHROPIC_PRICING_URL,
+                verified=True,
+                notes=notes,
+            )
+        ],
+    )
+
+
 CATALOG: list[ModelDefinition] = [
     # ---- LLMs (non-reasoning models first: lower time-to-first-token for voice)
     _llm("gpt-4.1-mini", "GPT-4.1 mini", "0.40", "0.10", "1.60"),
     _llm("gpt-4o-mini", "GPT-4o mini", "0.15", "0.075", "0.60"),
     _llm("gpt-5-mini", "GPT-5 mini (reasoning)", "0.25", "0.025", "2.00"),
     _llm("gpt-5.4-nano", "GPT-5.4 nano (reasoning)", "0.20", "0.02", "1.25"),
+    # Anthropic, called with effort "low" (cache writes priced at the 5-minute TTL rate; thinking tokens bill as output)
+    _claude(
+        "claude-haiku-5-5",
+        "Claude Haiku 5.5",
+        "0.10",
+        "0.125",
+        "0.01",
+        "0.50",
+        notes="Prompts over 100,000 tokens bill at $0.50 / $2.50; voice turns stay far below that.",
+    ),
+    _claude("claude-sonnet-5-5", "Claude Sonnet 5.5", "2", "2.50", "0.10", "10"),
+    _claude("claude-opus-5-5", "Claude Opus 5.5", "4", "5", "0.20", "20"),
     # ---- STT
     ModelDefinition(
         provider=ModelProvider.OPENAI,

@@ -34,6 +34,20 @@
 7. `status_callback` (firma validada) actualiza estado/duración; al completar se consulta el `price`
    del recurso Call de Twilio y se registra como coste de telefonía `provider_reported`.
 
+### Flujo de una sesión en el navegador (Fase 4)
+
+1. `POST /api/browser-sessions` crea un `Call` con `direction=browser`, `status=ready` y los mismos snapshots.
+2. Al pulsar *Start talking*, la web pide `POST /api/calls/{id}/browser-token` (token de un solo uso) y abre
+   `ws://API/browser/audio?call_id=…&token=…` directamente contra la API.
+3. Un AudioWorklet (`apps/web/public/mic-worklet.js`) baja el micrófono a PCM16 16 kHz y envía tramas de 20 ms
+   como mensajes binarios. La API devuelve PCM16 24 kHz (frecuencia nativa del TTS) y mensajes JSON `mark`,
+   `clear` y `hangup`; la página devuelve cada `mark` cuando ese audio termina de sonar.
+4. `SessionRunner` (`engines/runner.py`) es el mismo ciclo de vida que usa Twilio: valida el token, crea la
+   sesión, arranca el motor, aplica límites y cierra. Para el navegador además marca la llamada como
+   `in-progress` / `completed` y calcula la duración (en teléfono lo hacen los webhooks de Twilio).
+5. Sin auriculares el cliente es half-duplex: no envía micrófono mientras suena el agente, para que no se
+   escuche a sí mismo. Con la casilla de interrupciones activada envía siempre y funciona el barge-in.
+
 ## Contratos principales
 
 ```python
@@ -85,14 +99,49 @@ El consumo real vive en `usage_events`, nunca en el catálogo.
 | `estimated` | falta alguna dimensión, precio no verificado, consumo estimado o tarifa aproximada (`approximate`, p. ej. el $/min publicado para `gpt-4o-mini-transcribe`, que en realidad se factura por tokens) |
 | `unavailable` | no hay precio o no se puede medir la dimensión facturada (p. ej. tokens de audio de `gpt-4o-mini-tts`) |
 
-`usage_source` distingue `provider_reported` (tokens del LLM), `measured` (segundos de audio enviados a STT,
-caracteres enviados a TTS) y `estimated`. El panel muestra "Known cost" y avisa de partidas sin precio:
+`usage_source` distingue `provider_reported` (tokens del LLM; segundos facturados que devuelve
+`gpt-transcribe`, que redondea hacia arriba), `measured` (segundos de audio enviados a STT cuando el
+proveedor no los informa, caracteres enviados a TTS) y `estimated`. El panel muestra "Known cost" y avisa de partidas sin precio:
 nunca se presenta una estimación como consumo confirmado.
+
+## LLM: OpenAI y Anthropic
+
+Ambos implementan `LLMClient.stream()`. `AnthropicLLM` usa el SDK oficial (`client.beta.messages.stream`):
+
+- `output_config.effort = "low"` y **sin** parámetro `thinking`. Medido el 2026-10-27 con el prompt del agente:
+  desactivar el razonamiento (`disabled` en Haiku 5.5, `between_tools` en Sonnet 5.5) dio un tiempo hasta el
+  primer token **1,5–5× peor** que dejar el razonamiento adaptativo con esfuerzo bajo:
+
+  | Modelo | `thinking` desactivado | adaptativo + `effort: low` |
+  | --- | --- | --- |
+  | Claude Haiku 5.5 | 3,0–4,0 s | 0,63 s |
+  | Claude Sonnet 5.5 | 1,2–1,6 s | 0,8 s |
+
+- `max_tokens` = respuesta + 4096 de margen, porque el razonamiento consume tokens de salida. La longitud
+  de la respuesta hablada la controla el system prompt.
+- Opus 5.5 y Sonnet 5.5 usan *fallbacks* de servidor (`fallbacks: "default"`): si Claude rechaza la petición,
+  Anthropic la reintenta en su modelo de respaldo recomendado. El uso se factura al modelo que respondió
+  (`UsageEvent.model`, con `details.requested_model`). Un rechazo final (`stop_reason: refusal`) termina el
+  turno con `turn.failed`.
+- La conversación empieza con el saludo del agente; como la API exige que el primer mensaje sea del usuario,
+  se antepone `"[call connected]"`.
+- Coste: entrada, lectura de caché, escritura de caché (tarifa de 5 min) y salida, por separado.
+
+Medidas de una sesión real de navegador (pregunta corta, mismo audio, 2026-10-27):
+
+| LLM | STT | LLM 1er token | TTS 1er byte | Fin de habla → primer audio | Coste del turno |
+| --- | --- | --- | --- | --- | --- |
+| Claude Haiku 5.5 | 0,58 s | 1,6 s | 1,8 s | 3,4 s | $0,0017 |
+| Claude Sonnet 5.5 | 0,61 s | 1,3 s | 1,5 s | 3,5 s | $0,0026 |
+| GPT-4.1 mini | 0,67 s | 1,9 s | 1,1 s | 3,8 s | $0,0020 |
+
+Son medidas sueltas, no un benchmark. La mayor parte del coste por turno es el TTS (`tts-1`, por caracteres).
 
 ## Observabilidad
 
 Cada evento (`call.created`, `call.ringing`, `call.answered`, `session.started`, `speech.started/ended`,
 `stt.*`, `llm.*`, `tts.*`, `audio.playback.started/completed`, `agent.interrupted`, `usage.recorded`,
+`turn.failed`,
 `session.completed`, `call.completed/failed`, `*.failed`, `call.*_limit_reached`) se:
 
 1. persiste en `call_events` (call_id, session_id, `correlation_id` del turno, proveedor, modelo, duración, datos);
@@ -148,6 +197,8 @@ en `observability/events.py` (Fase 8) sin tocar los motores.
 | VAD por energía con ruido de línea | umbral adaptativo, 100 ms para empezar habla | VAD del proveedor o modelo (silero) |
 | Eco/barge-in falso | Twilio sólo envía la pista del llamante | ajustar umbral durante reproducción |
 | `tts-1`, `gpt-4o-mini-tts` y los `*-transcribe` 4o están deprecados (ene/feb 2027) | marcados en el catálogo; `gpt-transcribe` por defecto | migrar TTS a Realtime o a otro proveedor |
+| `tts-1` a veces genera audio ininteligible en frases cortas en español (3 de ~8 en pruebas) | el STT transcribe lo que recibe; se ve en la transcripción | comparar con `gpt-4o-mini-tts` u otro proveedor de TTS |
+| Sin auriculares, el agente puede oírse a sí mismo por el micrófono | half-duplex por defecto en el navegador | AEC/VAD más robusto |
 | Coste de `gpt-4o-mini-tts` no medible (tokens de audio no devueltos) | `cost_status=unavailable` explícito | — |
 | Precio de Twilio llega con retraso | sondeo 6×20 s y, si no llega, `unavailable` | job de reconciliación |
 | Hub en memoria (un solo proceso) | documentado | LISTEN/NOTIFY |
