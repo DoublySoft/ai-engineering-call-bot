@@ -103,7 +103,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
 
       <Card title="All figures">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm [&_td]:px-2 [&_td:first-child]:pl-0 [&_th]:whitespace-nowrap [&_th]:px-2 [&_th:first-child]:pl-0">
             <thead className="text-left text-xs uppercase text-muted">
               <tr>
                 <th className="py-2">Architecture</th>
@@ -167,6 +167,22 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
                 </tr>
               ))}
             </tbody>
+            {data.cost_by_provider.length > 0 && (
+              <tfoot>
+                <tr className="border-t-2 border-border font-semibold">
+                  <td className="py-2" colSpan={2}>
+                    Total
+                  </td>
+                  <td className="text-right tabular-nums">{data.cost_by_provider.reduce((n, p) => n + p.events, 0)}</td>
+                  <td className="text-right tabular-nums">{usd(data.cost_by_provider.reduce((sum, p) => sum + Number(p.cost_usd), 0))}</td>
+                  <td className="pl-4 text-xs font-normal text-muted">
+                    {data.cost_by_provider.every((p) => p.statuses.every((s) => s === "calculated" || s === "provider_reported"))
+                      ? "all known"
+                      : "excludes unpriced items"}
+                  </td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </Card>
         <Card title="How to read this">

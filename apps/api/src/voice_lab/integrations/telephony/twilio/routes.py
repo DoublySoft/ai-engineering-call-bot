@@ -22,6 +22,8 @@ from voice_lab.core.websocket import close_quietly
 from voice_lab.engines.runner import SessionRunner
 from voice_lab.integrations.telephony.twilio.client import TwilioTelephony
 from voice_lab.integrations.telephony.twilio.transport import TwilioMediaTransport
+from voice_lab.integrations.voice.retell.client import RetellClient
+from voice_lab.modules.calls.inbound import apology_twiml, handle_inbound
 from voice_lab.modules.calls.service import apply_twilio_status
 
 logger = logging.getLogger(__name__)
@@ -44,6 +46,22 @@ async def verified_twilio_form(request: Request, settings: Settings = Depends(ge
     if not TwilioTelephony(settings).validate(url, form, signature):
         raise HTTPException(403, "invalid Twilio signature")
     return form
+
+
+@router.post("/voice")
+async def inbound_voice(
+    form: dict[str, str] = Depends(verified_twilio_form),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """Voice webhook of the lab's Twilio number (set by /api/telephony/configure)."""
+    retell = RetellClient(settings.retell_api_key) if settings.retell_api_key else None
+    try:
+        twiml = await handle_inbound(db, form, settings, retell)
+    except Exception:  # never leave a caller in silence
+        logger.exception("inbound webhook failed")
+        twiml = apology_twiml()
+    return Response(content=twiml, media_type="application/xml")
 
 
 @router.post("/status")

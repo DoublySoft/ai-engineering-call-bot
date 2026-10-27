@@ -19,6 +19,7 @@ from voice_lab.modules.browser.routes import router as browser_router
 from voice_lab.modules.calls.routes import router as calls_router
 from voice_lab.modules.dashboard.routes import router as dashboard_router
 from voice_lab.modules.retell.routes import router as retell_router
+from voice_lab.modules.telephony.routes import router as telephony_router
 
 configure_logging()
 configure_tracing()
@@ -48,6 +49,7 @@ app.include_router(agents_router)
 app.include_router(analytics_router)
 app.include_router(browser_router)
 app.include_router(retell_router)
+app.include_router(telephony_router)
 app.include_router(dashboard_router)
 app.include_router(twilio_router)
 

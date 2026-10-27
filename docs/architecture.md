@@ -34,6 +34,16 @@
 7. `status_callback` (firma validada) actualiza estado/duración; al completar se consulta el `price`
    del recurso Call de Twilio y se registra como coste de telefonía `provider_reported`.
 
+### Flujo de una llamada entrante (Fase 5)
+
+1. Alguien llama al número de Twilio. Twilio hace `POST /twilio/voice` (firma validada).
+2. Se elige el agente con `VoiceAgent.inbound_number == To`, o el agente por defecto. `INBOUND_ALLOWLIST` (opcional)
+   rechaza a quien no esté en la lista.
+3. Se crea la `Call` (`direction=inbound`, `provider_call_id = CallSid`) y se contesta con TwiML: `<Connect><Stream>`
+   para los motores propios, o `<Dial><Sip>` hacia Retell. Un reintento del webhook reutiliza la misma llamada.
+4. Desde aquí el flujo es el mismo que en saliente. Los webhooks de estado del número (configurados desde
+   **Telephony**) cierran la llamada e importan el precio de Twilio.
+
 ### Flujo de una sesión en el navegador (Fase 4)
 
 1. `POST /api/browser-sessions` crea un `Call` con `direction=browser`, `status=ready` y los mismos snapshots.
@@ -62,7 +72,7 @@ Detalles de uso en [agents.md](agents.md).
 | --- | --- | --- | --- |
 | Quién detecta turnos | VAD propio | `server_vad` de OpenAI | Retell |
 | STT / LLM / TTS | separados e intercambiables | un modelo speech-to-speech | Retell (LLM mapeado) |
-| Transporte | navegador o Twilio | navegador o Twilio | WebRTC de Retell (solo navegador aquí) |
+| Transporte | navegador o Twilio | navegador o Twilio | WebRTC de Retell (navegador) o SIP desde Twilio |
 | Coste | por componente | tokens de texto y audio | importe combinado reportado |
 | Código | `engines/pipeline.py` | `engines/realtime.py` | `modules/retell/` + `integrations/voice/retell/` |
 

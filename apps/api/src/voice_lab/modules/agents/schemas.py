@@ -53,6 +53,8 @@ LANGUAGE_CODE = re.compile(r"^[a-z]{2,3}(-[A-Za-z]{2,4})?$")
 class AgentWrite(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str | None = Field(None, max_length=500)
+    # Inbound routing: calls to this Twilio number are answered by this agent (not versioned).
+    inbound_number: str | None = None
     engine: Literal["pipeline", "realtime"] = "pipeline"
     voice_provider: Literal["custom", "retell"] = "custom"
     settings: AgentSettings = AgentSettings()
@@ -63,6 +65,13 @@ class AgentWrite(BaseModel):
         if not v.strip():
             raise ValueError("name is required")
         return v.strip()
+
+    @field_validator("inbound_number")
+    @classmethod
+    def _e164(cls, v: str | None) -> str | None:
+        from voice_lab.core.security import normalize_e164
+
+        return normalize_e164(v) if v and v.strip() else None
 
     @field_validator("settings")
     @classmethod
@@ -83,6 +92,7 @@ class AgentOut(BaseModel):
     id: uuid.UUID
     name: str
     description: str | None
+    inbound_number: str | None = None
     is_default: bool
     archived: bool
     created_at: datetime

@@ -3,13 +3,13 @@
 | Fase | Estado | Notas |
 | --- | --- | --- |
 | 1. Foundation | ✅ | monorepo, FastAPI, Next.js, Postgres, Alembic, catálogo, eventos, dashboard |
-| 2. Primera llamada outbound | ✅ implementada, ⏳ pendiente de prueba real | ver [first-call.md](first-call.md) |
+| 2. Primera llamada outbound | ✅ implementada; ⏳ solo falta comprar y conectar el número | ver [telephony.md](telephony.md) |
 | 3. Anthropic como LLM | ✅ | Claude Haiku/Sonnet/Opus 5.5 con `effort: low`; probado en vivo |
 | 4. Browser voice chat | ✅ probado en vivo, también con micrófono real | ver [browser-voice.md](browser-voice.md) |
 | 4b. Agentes configurables | ✅ | instrucciones, conocimiento, saludo, modelos; versionados. Ver [agents.md](agents.md) |
-| 5. Inbound | — | webhook `/twilio/voice` → `VoiceAgent.inbound_number` → mismo `<Connect><Stream>` |
+| 5. Inbound | ✅ implementada; ⏳ solo falta el número | agente por número, por defecto o Retell; ver [telephony.md](telephony.md) |
 | 6. OpenAI Realtime | ✅ probado en vivo | ver [realtime.md](realtime.md) |
-| 7. Retell AI | ✅ llamadas web; ⏳ falta probar una llamada con micrófono | ver [retell.md](retell.md); el teléfono vía Retell+Twilio queda fuera (Twilio) |
+| 7. Retell AI | ✅ web y teléfono (SIP); ⏳ falta probar con micrófono y con número | ver [retell.md](retell.md) |
 | 8. Observabilidad avanzada | ✅ | OpenTelemetry + `/analytics`; ver [observability.md](observability.md) |
 
 ## Pendiente conocido de Fase 4

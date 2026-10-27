@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 _SENTENCE_END = re.compile(r"(?<=[.!?¿¡…:;])\s+")
 PREROLL_MS = 300
+MIN_INTERRUPT_MS = 1500
 
 
 def split_ready_sentences(buffer: str) -> tuple[list[str], str]:
@@ -51,6 +52,9 @@ class PipelineEngine:
         self._transcript = TranscriptStore(ctx.sessionmaker, ctx.session_id)
         self._turns: list[dict[str, Any]] = []
         self._closed = False
+        self._uncommitted_audio: np.ndarray | None = None
+        self._user_turn_committed = False
+        self._audio_out_active = False
 
     # ------------------------------------------------------------ lifecycle
     async def start(self) -> None:
@@ -73,7 +77,9 @@ class PipelineEngine:
 
     @property
     def agent_speaking(self) -> bool:
-        return bool(self._turn_task and not self._turn_task.done()) or bool(self._pending_marks)
+        """True when the agent is (or is about to be) audible — not during STT."""
+        turn_busy = bool(self._turn_task and not self._turn_task.done())
+        return self._audio_out_active or bool(self._pending_marks) or (turn_busy and self._user_turn_committed)
 
     # ------------------------------------------------------------ audio in
     async def handle_audio(self, samples: np.ndarray) -> None:
@@ -90,15 +96,34 @@ class PipelineEngine:
             if event == VadEvent.SPEECH_STARTED:
                 self._utterance = self._preroll + self._utterance
                 self._preroll = []
+                turn_running = bool(self._turn_task and not self._turn_task.done())
+                can_merge = turn_running and self._uncommitted_audio is not None and not self._user_turn_committed
                 await self.ctx.events.emit("speech.started")
-                if self.agent_speaking and self.capabilities.barge_in:
-                    await self._barge_in()
+                if can_merge:
+                    prev = self._uncommitted_audio
+                    assert prev is not None
+                    if self._turn_task and not self._turn_task.done():
+                        self._turn_task.cancel()
+                    self._utterance = [prev] + self._utterance
+                    self._uncommitted_audio = None
+                # If the agent is mid-reply, do not cancel yet: short echo/noise often
+                # triggers SPEECH_STARTED; SPEECH_ENDED decides whether to yield.
             elif event == VadEvent.SPEECH_ENDED:
                 audio = np.concatenate(self._utterance) if self._utterance else np.zeros(0, np.int16)
                 self._utterance = []
-                await self.ctx.events.emit("speech.ended", audio_ms=int(audio.size * 1000 / self._rate))
-                if self._turn_task and not self._turn_task.done():
-                    self._turn_task.cancel()
+                audio_ms = int(audio.size * 1000 / self._rate)
+                prev_running = bool(self._turn_task and not self._turn_task.done())
+                agent_mid_reply = prev_running and self.agent_speaking
+                await self.ctx.events.emit("speech.ended", audio_ms=audio_ms)
+                if agent_mid_reply and audio_ms < MIN_INTERRUPT_MS:
+                    continue
+                if prev_running:
+                    if agent_mid_reply and self.capabilities.barge_in:
+                        await self._barge_in()
+                    elif self._turn_task and not self._turn_task.done():
+                        self._turn_task.cancel()
+                self._uncommitted_audio = audio
+                self._user_turn_committed = False
                 self._turn_task = asyncio.create_task(self._run_turn(audio, time.perf_counter()))
 
     async def on_playback_done(self, label: str) -> None:
@@ -110,6 +135,9 @@ class PipelineEngine:
         if self._turn_task and not self._turn_task.done():
             self._turn_task.cancel()
         self._pending_marks.clear()
+        self._audio_out_active = False
+        self._uncommitted_audio = None
+        self._user_turn_committed = False
         await self.ctx.transport.clear_audio()
         await self.ctx.events.emit("agent.interrupted")
 
@@ -127,10 +155,15 @@ class PipelineEngine:
                 res["characters"] = len(transcript.text)
             await self._record_stt(transcript, turn["stt_ms"], cid)
             if not transcript.text:
+                if self._uncommitted_audio is audio:
+                    self._uncommitted_audio = None
                 return
             await self._transcript.add("user", transcript.text)
             self.ctx.events.push({"type": "transcript", "role": "user", "text": transcript.text, "final": True, "correlation_id": cid})
             self._history.append(ChatMessage("user", transcript.text))
+            self._user_turn_committed = True
+            if self._uncommitted_audio is audio:
+                self._uncommitted_audio = None
 
             # ---- LLM (streamed) -> TTS per sentence.
             # The LLM stream is consumed in its own task so llm.* timings measure
@@ -172,6 +205,7 @@ class PipelineEngine:
             logger.exception("turn failed")
             await self.ctx.events.emit("turn.failed", correlation_id=cid, error=type(exc).__name__, message=str(exc)[:300])
         finally:
+            self._audio_out_active = False
             self._turns.append(turn)
             await self._check_spend_limit()
 
@@ -209,15 +243,19 @@ class PipelineEngine:
     async def _speak_only(self, text: str) -> None:
         cid = uuid.uuid4().hex[:16]
         turn: dict[str, Any] = {"correlation_id": cid, "greeting": True}
-        await self._speak(text, cid, turn, None)
-        await self._transcript.add("agent", text)
-        self._history.append(ChatMessage("assistant", text))
-        self.ctx.events.push({"type": "transcript", "role": "agent", "text": text, "final": True, "correlation_id": cid})
-        await self._mark(cid)
-        self._turns.append(turn)
+        try:
+            await self._speak(text, cid, turn, None)
+            await self._transcript.add("agent", text)
+            self._history.append(ChatMessage("assistant", text))
+            self.ctx.events.push({"type": "transcript", "role": "agent", "text": text, "final": True, "correlation_id": cid})
+            await self._mark(cid)
+        finally:
+            self._audio_out_active = False
+            self._turns.append(turn)
 
     async def _speak(self, text: str, cid: str, turn: dict[str, Any], speech_ended_at: float | None) -> None:
         tts_model, voice = self.cfg["tts_model"], self.cfg["tts_voice"]
+        self._audio_out_active = True
         async with self.ctx.events.span(
             "tts", correlation_id=cid, provider=self.tts.provider, model=tts_model, characters=len(text)
         ) as res:

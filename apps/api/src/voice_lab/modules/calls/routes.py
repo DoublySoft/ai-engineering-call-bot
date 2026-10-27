@@ -17,6 +17,7 @@ from voice_lab.core.security import events_token, require_admin, verify_events_t
 from voice_lab.engines.realtime import REALTIME_VOICES
 from voice_lab.integrations.registry import IMPLEMENTED
 from voice_lab.integrations.telephony.twilio.client import TwilioTelephony
+from voice_lab.integrations.voice.retell.client import RetellClient
 from voice_lab.integrations.voice.retell.mapping import RETELL_LLM_MODELS
 from voice_lab.modules.calls.schemas import CallDetail, CallSummary, OutboundCallRequest
 from voice_lab.modules.calls.service import start_outbound_call
@@ -81,7 +82,8 @@ async def create_call(
 ) -> dict[str, Any]:
     try:
         telephony = TwilioTelephony(settings) if settings.twilio_configured else None
-        call = await start_outbound_call(db, request, settings, telephony)  # type: ignore[arg-type]
+        retell = RetellClient(settings.retell_api_key) if settings.retell_api_key else None
+        call = await start_outbound_call(db, request, settings, telephony, retell)  # type: ignore[arg-type]
     except LabError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     return {"id": str(call.id), "status": call.status}

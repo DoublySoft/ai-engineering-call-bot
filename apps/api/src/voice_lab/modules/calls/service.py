@@ -12,9 +12,11 @@ from voice_lab.core.config import Settings
 from voice_lab.core.database import SessionLocal
 from voice_lab.core.errors import LabError
 from voice_lab.core.security import new_stream_token
-from voice_lab.integrations.telephony.twilio.client import TwilioTelephony, stream_twiml
+from voice_lab.integrations.telephony.twilio.client import TwilioTelephony, sip_twiml, stream_twiml
+from voice_lab.integrations.voice.retell.client import RetellClient
 from voice_lab.modules.agents.service import resolve_session
 from voice_lab.modules.calls.schemas import OutboundCallRequest
+from voice_lab.modules.retell.service import ensure_watcher, register_phone_call
 from voice_lab.modules.sessions.config import check_provider_keys, pricing_snapshot
 from voice_lab.observability.events import EventRecorder
 from voice_lab.persistence.models import Call
@@ -36,13 +38,15 @@ def check_outbound_prerequisites(settings: Settings, to: str) -> None:
         raise CallError("PUBLIC_BASE_URL must be an https URL Twilio can reach (e.g. an ngrok tunnel)", 503)
 
 
-async def start_outbound_call(db: AsyncSession, request: OutboundCallRequest, settings: Settings, telephony: TwilioTelephony) -> Call:
+async def start_outbound_call(
+    db: AsyncSession, request: OutboundCallRequest, settings: Settings, telephony: TwilioTelephony, retell: RetellClient | None = None
+) -> Call:
     check_outbound_prerequisites(settings, request.to)
     config, agent_cfg = await resolve_session(db, request.config, settings)
-    if config["voice_provider"] == "retell":
-        # Retell phone calls go through Retell's own Twilio integration (not built: Twilio-dependent).
-        raise CallError("Retell is available for browser sessions only in this lab")
     check_provider_keys(config, settings)
+    via_retell = config["voice_provider"] == "retell"
+    if via_retell and retell is None:
+        raise CallError("RETELL_API_KEY is not set", 503)
 
     call = Call(
         direction="outbound",
@@ -53,7 +57,7 @@ async def start_outbound_call(db: AsyncSession, request: OutboundCallRequest, se
         agent_configuration_id=agent_cfg.id,
         config_snapshot=config,
         pricing_snapshot=pricing_snapshot(config),
-        stream_token=new_stream_token(),
+        stream_token=None if via_retell else new_stream_token(),
         started_at=datetime.now(UTC),
     )
     db.add(call)
@@ -68,10 +72,16 @@ async def start_outbound_call(db: AsyncSession, request: OutboundCallRequest, se
         agent=config["agent"]["name"],
     )
 
-    twiml = stream_twiml(
-        f"{settings.public_ws_base}/twilio/media",
-        {"call_id": str(call.id), "token": call.stream_token or ""},
-    )
+    try:
+        if via_retell:  # Retell runs the conversation; Twilio only carries the audio over SIP
+            twiml = sip_twiml(await register_phone_call(db, retell, call, settings), settings.max_call_duration_seconds)  # type: ignore[arg-type]
+        else:
+            twiml = stream_twiml(f"{settings.public_ws_base}/twilio/media", {"call_id": str(call.id), "token": call.stream_token or ""})
+    except LabError as exc:
+        call.status, call.error = "failed", str(exc)[:300]
+        await db.commit()
+        await events.emit("call.failed", provider="retell", error=call.error)
+        raise
     try:
         sid = await telephony.start_outbound(
             to=request.to,
@@ -87,6 +97,8 @@ async def start_outbound_call(db: AsyncSession, request: OutboundCallRequest, se
 
     call.provider_call_id, call.status = sid, "initiated"
     await db.commit()
+    if via_retell:
+        ensure_watcher(call.id, retell, settings.max_call_duration_seconds)  # type: ignore[arg-type]
     return call
 
 
@@ -128,34 +140,50 @@ async def apply_twilio_status(
 async def record_telephony_cost(
     call_id: uuid.UUID, call_sid: str, duration_s: int | None, telephony: TwilioTelephony, attempts: int = 6, delay_s: float = 20
 ) -> None:
-    """Twilio fills `price` asynchronously after the call ends; poll briefly for it."""
+    """Import Twilio's price for every leg of the call: the parent plus any child legs that
+    <Dial> created (the SIP leg to Retell). Twilio fills `price` asynchronously after the
+    call ends, so poll briefly; legs still unpriced at the end are recorded as unavailable."""
     events = EventRecorder(SessionLocal, call_id)
     usage = UsageRecorder(SessionLocal, events)
+    recorded: set[str] = set()
+    legs: dict[str, str] = {call_sid: "parent"}
     for attempt in range(attempts):
         try:
-            price = await telephony.fetch_price(call_sid)
+            for child in await telephony.child_call_sids(call_sid):
+                legs.setdefault(child, "child")
         except Exception as exc:
-            logger.warning("twilio price fetch failed: %s", type(exc).__name__)
-            price = None
-        if price and price.amount_usd is not None and price.unit == "USD":
+            logger.warning("twilio child-leg lookup failed: %s", type(exc).__name__)
+        for sid, leg in legs.items():
+            if sid in recorded:
+                continue
+            try:
+                price = await telephony.fetch_price(sid)
+            except Exception as exc:
+                logger.warning("twilio price fetch failed: %s", type(exc).__name__)
+                continue
+            if price.amount_usd is not None and price.unit == "USD":
+                await usage.record(
+                    provider="twilio",
+                    model="programmable-voice",
+                    operation_type="telephony",
+                    cost=CostResult(price.amount_usd, CostStatus.PROVIDER_REPORTED, "twilio-call-resource"),
+                    usage_source="provider_reported",
+                    audio_duration_ms=(price.duration_seconds or (duration_s if leg == "parent" else 0) or 0) * 1000,
+                    details={"price_unit": price.unit, "leg": leg, "call_sid": sid},
+                )
+                recorded.add(sid)
+        if len(recorded) == len(legs):
+            return
+        if attempt < attempts - 1:
+            await asyncio.sleep(delay_s)
+    for sid, leg in legs.items():
+        if sid not in recorded:
             await usage.record(
                 provider="twilio",
                 model="programmable-voice",
                 operation_type="telephony",
-                cost=CostResult(price.amount_usd, CostStatus.PROVIDER_REPORTED, "twilio-call-resource"),
+                cost=calculate_cost(None, {BillingDimension.CALL_SECONDS: duration_s or 0}),
                 usage_source="provider_reported",
-                audio_duration_ms=(price.duration_seconds or duration_s or 0) * 1000,
-                details={"price_unit": price.unit},
+                audio_duration_ms=((duration_s or 0) if leg == "parent" else 0) * 1000,
+                details={"leg": leg, "call_sid": sid, "note": "Twilio had not published the price yet; check the Twilio console."},
             )
-            return
-        if attempt < attempts - 1:
-            await asyncio.sleep(delay_s)
-    await usage.record(
-        provider="twilio",
-        model="programmable-voice",
-        operation_type="telephony",
-        cost=calculate_cost(None, {BillingDimension.CALL_SECONDS: duration_s or 0}),
-        usage_source="provider_reported",
-        audio_duration_ms=(duration_s or 0) * 1000,
-        details={"note": "Twilio had not published the price yet; check the Twilio console."},
-    )

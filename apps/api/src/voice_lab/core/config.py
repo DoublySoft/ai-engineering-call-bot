@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:3000"])
 
     outbound_allowlist: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # Inbound: empty = anyone may call the lab's number; otherwise only these callers.
+    inbound_allowlist: Annotated[list[str], NoDecode] = Field(default_factory=list)
     max_call_duration_seconds: int = 300
     max_call_cost_usd: Decimal = Decimal("0.50")
     record_audio: bool = False
@@ -45,7 +47,7 @@ class Settings(BaseSettings):
     retell_data_storage: str = "basic_attributes_only"
     agent_language: str = "es"
 
-    @field_validator("outbound_allowlist", "cors_origins", mode="before")
+    @field_validator("outbound_allowlist", "inbound_allowlist", "cors_origins", mode="before")
     @classmethod
     def _split_csv(cls, v: object) -> object:
         if isinstance(v, str):

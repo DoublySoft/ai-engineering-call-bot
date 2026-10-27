@@ -20,6 +20,8 @@ os.environ["TWILIO_AUTH_TOKEN"] = "test-twilio-token"
 os.environ["TWILIO_PHONE_NUMBER"] = "+15005550006"
 os.environ["OPENAI_API_KEY"] = "sk-test-not-real"
 os.environ["ANTHROPIC_API_KEY"] = ""
+os.environ["RETELL_API_KEY"] = "key_test_not_real"
+os.environ["INBOUND_ALLOWLIST"] = ""
 get_settings.cache_clear()
 
 

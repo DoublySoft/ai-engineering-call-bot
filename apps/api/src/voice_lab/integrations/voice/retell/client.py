@@ -63,5 +63,16 @@ class RetellClient:
     async def create_web_call(self, *, agent_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
         return await self._request("POST", "/v3/create-web-call", {"agent_id": agent_id, "metadata": metadata})
 
+    async def register_phone_call(
+        self, *, agent_id: str, from_number: str, to_number: str, direction: str, metadata: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Custom telephony ("Dial to SIP URI"): our Twilio number dials sip:{call_id}@sip.retellai.com
+        within 5 minutes of registering."""
+        return await self._request(
+            "POST",
+            "/v2/register-phone-call",
+            {"agent_id": agent_id, "from_number": from_number, "to_number": to_number, "direction": direction, "metadata": metadata},
+        )
+
     async def get_call(self, call_id: str) -> dict[str, Any]:
         return await self._request("GET", f"/v2/get-call/{call_id}")

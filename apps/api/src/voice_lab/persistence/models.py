@@ -134,6 +134,8 @@ class Call(Base, Timestamped):
     config_snapshot: Mapped[dict[str, Any]] = mapped_column(Json)
     pricing_snapshot: Mapped[dict[str, Any]] = mapped_column(Json, default=dict)
     stream_token: Mapped[str | None] = mapped_column(String(64))
+    # Ids at other providers for the same call (e.g. {"retell_call_id": ...}).
+    provider_refs: Mapped[dict[str, Any]] = mapped_column(Json, default=dict, server_default="{}")
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

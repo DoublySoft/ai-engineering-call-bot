@@ -1,3 +1,6 @@
 packages:
-  - "apps/web"
-  - "packages/*"
+  - apps/web
+  - packages/*
+
+ignoredBuiltDependencies:
+  - unrs-resolver

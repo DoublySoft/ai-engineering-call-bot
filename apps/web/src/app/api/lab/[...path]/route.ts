@@ -4,7 +4,7 @@ import { apiFetch } from "@/lib/server-api";
 // Same-origin proxy so browser code can reach /api/* without holding the admin token.
 const UUID = "[0-9a-f-]{36}";
 const ALLOWED = new RegExp(
-  `^(catalog|dashboard|analytics|browser-sessions|calls(/${UUID}(/(hangup|browser-token|retell-web-call|retell-sync))?)?|agents(/meta|/${UUID}(/default)?)?)$`,
+  `^(catalog|dashboard|analytics|telephony/(status|configure)|browser-sessions|calls(/${UUID}(/(hangup|browser-token|retell-web-call|retell-sync))?)?|agents(/meta|/${UUID}(/default)?)?)$`,
 );
 
 async function forward(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {

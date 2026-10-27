@@ -3,7 +3,7 @@
 import asyncio
 from dataclasses import dataclass
 from decimal import Decimal
-from xml.sax.saxutils import quoteattr
+from xml.sax.saxutils import escape, quoteattr
 
 from twilio.request_validator import RequestValidator
 from twilio.rest import Client
@@ -21,6 +21,14 @@ class TwilioPrice:
 def stream_twiml(ws_url: str, parameters: dict[str, str]) -> str:
     params = "".join(f"<Parameter name={quoteattr(k)} value={quoteattr(v)} />" for k, v in parameters.items())
     return f"<Response><Connect><Stream url={quoteattr(ws_url)}>{params}</Stream></Connect></Response>"
+
+
+def sip_twiml(sip_uri: str, time_limit: int) -> str:
+    return f"<Response><Dial timeLimit={quoteattr(str(time_limit))}><Sip>{escape(sip_uri)}</Sip></Dial></Response>"
+
+
+def reject_twiml() -> str:
+    return '<Response><Reject reason="rejected" /></Response>'
 
 
 class TwilioTelephony:
@@ -53,6 +61,38 @@ class TwilioTelephony:
         amount = abs(Decimal(call.price)) if call.price not in (None, "") else None
         duration = int(call.duration) if call.duration not in (None, "") else None
         return TwilioPrice(amount, call.price_unit, duration)
+
+    async def child_call_sids(self, parent_sid: str) -> list[str]:
+        """Legs created by <Dial> (e.g. the SIP leg to Retell). Twilio bills each leg separately."""
+        children = await asyncio.to_thread(self._client.calls.list, parent_call_sid=parent_sid, limit=20)
+        return [c.sid for c in children]
+
+    async def account_status(self) -> str:
+        account = await asyncio.to_thread(self._client.api.v2010.accounts(self._settings.twilio_account_sid).fetch)
+        return account.status
+
+    async def find_number(self, phone_number: str) -> dict | None:
+        numbers = await asyncio.to_thread(self._client.incoming_phone_numbers.list, phone_number=phone_number, limit=1)
+        if not numbers:
+            return None
+        n = numbers[0]
+        return {
+            "sid": n.sid,
+            "phone_number": n.phone_number,
+            "voice_url": n.voice_url,
+            "voice_method": n.voice_method,
+            "status_callback": n.status_callback,
+            "voice_capable": bool((n.capabilities or {}).get("voice")),
+        }
+
+    async def configure_number(self, number_sid: str, voice_url: str, status_callback: str) -> None:
+        await asyncio.to_thread(
+            self._client.incoming_phone_numbers(number_sid).update,
+            voice_url=voice_url,
+            voice_method="POST",
+            status_callback=status_callback,
+            status_callback_method="POST",
+        )
 
     def validate(self, url: str, params: dict[str, str], signature: str) -> bool:
         return self._validator.validate(url, params, signature)
