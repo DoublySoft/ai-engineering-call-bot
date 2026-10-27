@@ -12,11 +12,12 @@ from sqlalchemy.orm import selectinload
 from voice_lab.catalog.registry import all_models
 from voice_lab.core.config import Settings, get_settings
 from voice_lab.core.database import get_db
+from voice_lab.core.errors import LabError
 from voice_lab.core.security import events_token, require_admin, verify_events_token
 from voice_lab.integrations.registry import IMPLEMENTED
 from voice_lab.integrations.telephony.twilio.client import TwilioTelephony
 from voice_lab.modules.calls.schemas import CallDetail, CallSummary, OutboundCallRequest
-from voice_lab.modules.calls.service import CallError, start_outbound_call
+from voice_lab.modules.calls.service import start_outbound_call
 from voice_lab.observability.hub import hub
 from voice_lab.persistence.models import (
     Call,
@@ -70,7 +71,7 @@ async def create_call(
     try:
         telephony = TwilioTelephony(settings) if settings.twilio_configured else None
         call = await start_outbound_call(db, request, settings, telephony)  # type: ignore[arg-type]
-    except CallError as exc:
+    except LabError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     return {"id": str(call.id), "status": call.status}
 

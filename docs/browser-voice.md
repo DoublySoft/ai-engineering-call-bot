@@ -44,5 +44,5 @@ el micrófono envía siempre y puedes cortar al agente hablando encima (barge-in
 - En vivo (2026-10-27): un cliente Python que envía voz real por el WebSocket contra la API con
   `gpt-transcribe` + Claude Haiku/Sonnet 5.5 o GPT-4.1 mini + `tts-1`: saludo, transcripción, respuesta
   correcta, métricas y costes.
-- **Pendiente:** probar con micrófono real en Chrome. El navegador integrado que usé para revisar la UI
-  bloquea el micrófono; la página muestra el error correctamente.
+- Con micrófono real en Chrome (2026-10-27). El navegador integrado de Claude Code bloquea el micrófono: abre
+  la página en tu navegador normal.

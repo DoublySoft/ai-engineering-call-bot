@@ -14,7 +14,7 @@ from voice_lab.core.config import get_settings
 from voice_lab.core.database import engine as db_engine
 from voice_lab.main import app
 from voice_lab.modules.calls.schemas import SessionConfig
-from voice_lab.modules.calls.service import resolve_config
+from voice_lab.modules.sessions.config import resolve_config
 from voice_lab.persistence.models import Call, CallEvent, ConversationMessage, ConversationSession
 
 pytestmark = pytest.mark.integration

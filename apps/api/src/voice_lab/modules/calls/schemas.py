@@ -7,16 +7,14 @@ from pydantic import BaseModel, Field, field_validator
 
 from voice_lab.core.security import normalize_e164
 
-DEFAULT_SYSTEM_PROMPT = (
-    "Eres un asistente de voz de un laboratorio de pruebas. Responde en el idioma del usuario, "
-    "con frases cortas y naturales (máximo dos frases), sin listas ni formato markdown, porque tu "
-    "respuesta se convertirá en voz en una llamada telefónica."
-)
-
 
 class SessionConfig(BaseModel):
-    voice_provider: Literal["custom", "retell"] = "custom"
-    engine: Literal["pipeline", "realtime"] = "pipeline"
+    """Which agent to run, plus optional per-call overrides of its defaults.
+    Only fields that are explicitly sent override the agent (see resolve_config)."""
+
+    agent_id: uuid.UUID | None = None  # None -> the default agent
+    voice_provider: Literal["custom", "retell"] | None = None
+    engine: Literal["pipeline", "realtime"] | None = None
     stt_provider: str | None = None
     stt_model: str | None = None
     llm_provider: str | None = None
@@ -25,9 +23,8 @@ class SessionConfig(BaseModel):
     tts_model: str | None = None
     tts_voice: str | None = None
     language: str | None = None
-    system_prompt: str = Field(DEFAULT_SYSTEM_PROMPT, max_length=4000)
-    greeting: str | None = Field("Hola, soy el asistente del laboratorio de voz. ¿En qué puedo ayudarte?", max_length=500)
-    max_output_tokens: int = Field(300, ge=16, le=2000)
+    greeting: str | None = Field(None, max_length=500)
+    max_output_tokens: int | None = Field(None, ge=16, le=2000)
 
 
 class OutboundCallRequest(BaseModel):

@@ -1,8 +1,10 @@
 import pytest
 
 from voice_lab.core.config import get_settings
+from voice_lab.core.errors import LabError as CallError
 from voice_lab.modules.calls.schemas import OutboundCallRequest, SessionConfig
-from voice_lab.modules.calls.service import CallError, check_outbound_prerequisites, pricing_snapshot, resolve_config
+from voice_lab.modules.calls.service import check_outbound_prerequisites
+from voice_lab.modules.sessions.config import pricing_snapshot, resolve_config
 
 
 def test_defaults_are_filled_from_settings() -> None:
