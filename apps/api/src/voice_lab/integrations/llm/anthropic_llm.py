@@ -49,6 +49,10 @@ class AnthropicLLM:
             "system": system,
             "messages": convo,
             "output_config": {"effort": "low"},
+            # Automatic prompt caching: the system prompt (voice rules + role + knowledge)
+            # and earlier turns are re-read at ~10% of the input price on later turns.
+            # Prefixes below the model's minimum are simply not cached.
+            "cache_control": {"type": "ephemeral"},
         }
         if model in _SUPPORTS_FALLBACKS:
             kwargs["betas"] = [FALLBACK_BETA]

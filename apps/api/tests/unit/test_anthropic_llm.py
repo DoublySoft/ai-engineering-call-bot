@@ -62,6 +62,7 @@ async def test_stream_yields_text_then_usage_with_cache_split() -> None:
     assert "thinking" not in kwargs and kwargs["output_config"] == {"effort": "low"}
     assert kwargs["fallbacks"] == "default" and kwargs["betas"] == ["server-side-fallback-2026-07-01"]
     assert kwargs["max_tokens"] > 300  # thinking headroom
+    assert kwargs["cache_control"] == {"type": "ephemeral"}
 
 
 @pytest.mark.parametrize("model, fallbacks", [("claude-haiku-5-5", False), ("claude-opus-5-5", True)])

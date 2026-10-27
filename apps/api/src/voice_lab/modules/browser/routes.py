@@ -14,12 +14,14 @@ from starlette.websockets import WebSocketState
 
 from voice_lab.core.config import Settings, get_settings
 from voice_lab.core.database import SessionLocal, get_db
+from voice_lab.core.errors import LabError
 from voice_lab.core.security import new_stream_token, require_admin
 from voice_lab.core.websocket import close_quietly
 from voice_lab.engines.runner import SessionRunner
+from voice_lab.modules.agents.service import resolve_session
 from voice_lab.modules.browser.transport import BROWSER_INPUT_RATE, BROWSER_OUTPUT_RATE, BrowserTransport
 from voice_lab.modules.calls.schemas import SessionConfig
-from voice_lab.modules.calls.service import CallError, check_provider_keys, ensure_agent_configuration, pricing_snapshot, resolve_config
+from voice_lab.modules.sessions.config import check_provider_keys, pricing_snapshot
 from voice_lab.observability.events import EventRecorder
 from voice_lab.persistence.models import Call
 
@@ -37,11 +39,10 @@ async def create_browser_session(
     request: BrowserSessionRequest, db: AsyncSession = Depends(get_db), settings: Settings = Depends(get_settings)
 ) -> dict[str, str]:
     try:
-        config = resolve_config(request.config, settings)
+        config, agent_cfg = await resolve_session(db, request.config, settings)
         check_provider_keys(config, settings)
-    except CallError as exc:
+    except LabError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
-    agent_cfg = await ensure_agent_configuration(db, config)
     call = Call(
         direction="browser",
         status="ready",
@@ -52,7 +53,9 @@ async def create_browser_session(
     )
     db.add(call)
     await db.commit()
-    await EventRecorder(SessionLocal, call.id).emit("call.created", provider="browser", direction="browser", llm_model=config["llm_model"])
+    await EventRecorder(SessionLocal, call.id).emit(
+        "call.created", provider="browser", direction="browser", llm_model=config["llm_model"], agent=config["agent"]["name"]
+    )
     return {"id": str(call.id), "status": call.status}
 
 

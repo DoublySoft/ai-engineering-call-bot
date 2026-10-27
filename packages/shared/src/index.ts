@@ -152,3 +152,45 @@ export interface DashboardStats {
   cost_breakdown: { operation: string; cost_status: CostStatus; cost_usd: string | null; events: number }[];
   active_sessions: number;
 }
+
+export interface AgentSettings {
+  instructions: string;
+  knowledge: string;
+  greeting: string | null;
+  language: string;
+  stt_provider: string | null;
+  stt_model: string | null;
+  llm_provider: string | null;
+  llm_model: string | null;
+  tts_provider: string | null;
+  tts_model: string | null;
+  tts_voice: string | null;
+  max_output_tokens: number;
+}
+
+export interface Agent {
+  id: string;
+  name: string;
+  description: string | null;
+  is_default: boolean;
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  configuration_id: string;
+  engine: "pipeline" | "realtime";
+  voice_provider: "custom" | "retell";
+  settings: AgentSettings;
+  calls: number;
+}
+
+export interface AgentDetail extends Agent {
+  versions: { configuration_id: string; version: number; created_at: string }[];
+  /** Settings after server defaults are applied, incl. the final `system_prompt` (or `error`). */
+  effective: Record<string, string | number | null> & { system_prompt?: string; error?: string };
+}
+
+export interface AgentMeta {
+  languages: Record<string, string>;
+  voice_rules: string;
+}

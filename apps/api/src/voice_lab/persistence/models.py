@@ -76,16 +76,22 @@ class VoiceAgent(Base, Timestamped):
     __tablename__ = "voice_agents"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(100), unique=True)
+    description: Mapped[str | None] = mapped_column(Text)
     # Inbound routing (Phase 5): the Twilio number this agent answers.
     inbound_number: Mapped[str | None] = mapped_column(String(20), unique=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
-    configurations: Mapped[list["VoiceAgentConfiguration"]] = relationship(back_populates="agent")
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    configurations: Mapped[list["VoiceAgentConfiguration"]] = relationship(
+        back_populates="agent", order_by="VoiceAgentConfiguration.version"
+    )
 
 
 class VoiceAgentConfiguration(Base, Timestamped):
     """Immutable: editing an agent creates a new version so old calls keep theirs."""
 
     __tablename__ = "voice_agent_configurations"
+    __table_args__ = (UniqueConstraint("agent_id", "version", name="uq_agent_configuration_version"),)
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
     agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("voice_agents.id"))
     version: Mapped[int] = mapped_column(Integer, default=1)

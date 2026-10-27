@@ -48,6 +48,14 @@
 5. Sin auriculares el cliente es half-duplex: no envía micrófono mientras suena el agente, para que no se
    escuche a sí mismo. Con la casilla de interrupciones activada envía siempre y funciona el barge-in.
 
+### Agentes y configuración de sesión
+
+`modules/sessions/config.py` resuelve la configuración de cada sesión en este orden: **versión del agente** →
+**overrides explícitos de la llamada** (`SessionConfig`, solo los campos enviados) → **valores por defecto de
+`.env`**. Después valida que la combinación sea ejecutable y compone el `system_prompt` final
+(`modules/agents/prompt.py`). El snapshot de la llamada guarda todo, incluido `agent: {id, name, version}`.
+Detalles de uso en [agents.md](agents.md).
+
 ## Contratos principales
 
 ```python

@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import type { Catalog, CatalogModel } from "@voice-lab/shared";
+import type { Agent, AgentDetail, Catalog, CatalogModel } from "@voice-lab/shared";
 import { Card } from "@/components/ui";
 
 type Modality = "outbound" | "browser";
@@ -37,6 +38,10 @@ export default function NewCallPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [modality, setModality] = useState<Modality>("outbound");
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [agent, setAgent] = useState<AgentDetail | null>(null);
+  // Fields the user changed for this call only; everything else comes from the agent.
+  const [overridden, setOverridden] = useState<Set<string>>(new Set());
   const [form, setForm] = useState({
     to: "",
     voice_provider: "custom",
@@ -45,25 +50,51 @@ export default function NewCallPage() {
     stt: "",
     tts: "",
     tts_voice: "",
-    greeting: "Hola, soy el asistente del laboratorio de voz. ¿En qué puedo ayudarte?",
   });
 
   useEffect(() => {
+    const json = async (r: Response) => (r.ok ? r.json() : Promise.reject((await r.json()).detail));
     fetch("/api/lab/catalog")
-      .then(async (r) => (r.ok ? r.json() : Promise.reject((await r.json()).detail)))
+      .then(json)
       .then((c: Catalog) => {
         setCatalog(c);
-        setForm((f) => ({
-          ...f,
-          to: c.outbound_allowlist[0] ?? "",
-          llm: `${c.defaults.llm_provider}:${c.defaults.llm_model}`,
-          stt: `${c.defaults.stt_provider}:${c.defaults.stt_model}`,
-          tts: `${c.defaults.tts_provider}:${c.defaults.tts_model}`,
-          tts_voice: c.defaults.tts_voice,
-        }));
+        setForm((f) => ({ ...f, to: c.outbound_allowlist[0] ?? "" }));
+        if (!c.readiness.twilio) setModality("browser");
+      })
+      .catch((e) => setError(String(e)));
+    fetch("/api/lab/agents")
+      .then(json)
+      .then((list: Agent[]) => {
+        setAgents(list);
+        const fromUrl = new URLSearchParams(window.location.search).get("agent");
+        const initial = list.find((a) => a.id === fromUrl) ?? list.find((a) => a.is_default) ?? list[0];
+        if (initial) selectAgent(initial.id);
       })
       .catch((e) => setError(String(e)));
   }, []);
+
+  async function selectAgent(agentId: string) {
+    const res = await fetch(`/api/lab/agents/${agentId}`);
+    if (!res.ok) return setError("Could not load the agent");
+    const detail: AgentDetail = await res.json();
+    const eff = detail.effective;
+    setAgent(detail);
+    setOverridden(new Set());
+    setForm((f) => ({
+      ...f,
+      engine: detail.engine,
+      voice_provider: detail.voice_provider,
+      llm: `${eff.llm_provider}:${eff.llm_model}`,
+      stt: `${eff.stt_provider}:${eff.stt_model}`,
+      tts: `${eff.tts_provider}:${eff.tts_model}`,
+      tts_voice: String(eff.tts_voice ?? ""),
+    }));
+  }
+
+  function change(key: keyof typeof form, value: string) {
+    setForm((f) => ({ ...f, [key]: value }));
+    if (key !== "to") setOverridden((o) => new Set(o).add(key));
+  }
 
   const byKind = useMemo(() => {
     const out: Record<string, CatalogModel[]> = { llm: [], stt: [], tts: [] };
@@ -72,32 +103,27 @@ export default function NewCallPage() {
   }, [catalog]);
 
   const llmProviders = useMemo(() => [...new Set(byKind.llm.map((m) => m.provider)).add("anthropic")], [byKind]);
-  const [llmProvider, llmModel] = form.llm.split(":");
+  const [llmProvider] = form.llm.split(":");
   const pipeline = form.engine === "pipeline";
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setBusy(true);
-    const [stt_provider, stt_model] = form.stt.split(":");
-    const [tts_provider, tts_model] = form.tts.split(":");
+    // Send only what differs from the agent, so the call records real overrides.
+    const config: Record<string, string> = { agent_id: agent?.id ?? "" };
+    for (const part of ["llm", "stt", "tts"] as const) {
+      if (!overridden.has(part)) continue;
+      const [provider, model] = form[part].split(":");
+      config[`${part}_provider`] = provider;
+      config[`${part}_model`] = model;
+    }
+    if (overridden.has("tts_voice")) config.tts_voice = form.tts_voice;
+    if (overridden.has("engine")) config.engine = form.engine;
+    if (overridden.has("voice_provider")) config.voice_provider = form.voice_provider;
     const res = await fetch(modality === "browser" ? "/api/lab/browser-sessions" : "/api/lab/calls", {
       method: "POST",
-      body: JSON.stringify({
-        ...(modality === "outbound" ? { to: form.to } : {}),
-        config: {
-          voice_provider: form.voice_provider,
-          engine: form.engine,
-          llm_provider: llmProvider,
-          llm_model: llmModel,
-          stt_provider,
-          stt_model,
-          tts_provider,
-          tts_model,
-          tts_voice: form.tts_voice,
-          greeting: form.greeting || null,
-        },
-      }),
+      body: JSON.stringify({ ...(modality === "outbound" ? { to: form.to } : {}), config }),
     });
     const body = await res.json();
     setBusy(false);
@@ -148,11 +174,38 @@ export default function NewCallPage() {
         )}
       </Card>
 
+      <Card title="Agent">
+        <div className="flex flex-wrap items-center gap-3">
+          <select className={`${field} flex-1`} value={agent?.id ?? ""} onChange={(e) => selectAgent(e.target.value)}>
+            {agents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name} (v{a.version}){a.is_default ? " — default" : ""}
+              </option>
+            ))}
+          </select>
+          {agent && (
+            <Link href={`/agents/${agent.id}`} className="text-sm text-blue-600 hover:underline">
+              Edit agent →
+            </Link>
+          )}
+        </div>
+        {agent && (
+          <div className="mt-3 space-y-1 text-sm">
+            {agent.description && <p className="text-muted">{agent.description}</p>}
+            <p className="line-clamp-3">{agent.settings.instructions}</p>
+            <p className="text-xs text-muted">
+              Greeting: {agent.settings.greeting ? `“${agent.settings.greeting}”` : "none (waits for the caller)"} · Knowledge:{" "}
+              {agent.settings.knowledge ? `${agent.settings.knowledge.length.toLocaleString()} chars` : "none"}
+            </p>
+          </div>
+        )}
+      </Card>
+
       <Card title="Architecture">
         <div className="grid gap-3 md:grid-cols-2">
           <label className="text-sm">
             Voice provider
-            <select className={`${field} mt-1`} value={form.voice_provider} onChange={(e) => setForm({ ...form, voice_provider: e.target.value })}>
+            <select className={`${field} mt-1`} value={form.voice_provider} onChange={(e) => change("voice_provider", e.target.value)}>
               {VOICE_PROVIDERS.map((p) => (
                 <option key={p.id} value={p.id} disabled={!!p.phase}>
                   {p.label}
@@ -163,7 +216,7 @@ export default function NewCallPage() {
           </label>
           <label className="text-sm">
             Conversation engine
-            <select className={`${field} mt-1`} value={form.engine} onChange={(e) => setForm({ ...form, engine: e.target.value })}>
+            <select className={`${field} mt-1`} value={form.engine} onChange={(e) => change("engine", e.target.value)}>
               {ENGINES.map((p) => (
                 <option key={p.id} value={p.id} disabled={!!p.phase}>
                   {p.label}
@@ -176,7 +229,7 @@ export default function NewCallPage() {
       </Card>
 
       {pipeline && (
-        <Card title="Models">
+        <Card title="Models (pre-filled from the agent; changes apply to this call only)">
           <div className="grid gap-3 md:grid-cols-2">
             <label className="text-sm">
               LLM provider
@@ -185,7 +238,7 @@ export default function NewCallPage() {
                 value={llmProvider}
                 onChange={(e) => {
                   const first = byKind.llm.find((m) => m.provider === e.target.value);
-                  if (first) setForm({ ...form, llm: first.key });
+                  if (first) change("llm", first.key);
                 }}
               >
                 {llmProviders.map((p) => (
@@ -198,7 +251,7 @@ export default function NewCallPage() {
             </label>
             <label className="text-sm">
               LLM model
-              <select className={`${field} mt-1`} value={form.llm} onChange={(e) => setForm({ ...form, llm: e.target.value })}>
+              <select className={`${field} mt-1`} value={form.llm} onChange={(e) => change("llm", e.target.value)}>
                 {byKind.llm
                   .filter((m) => m.provider === llmProvider)
                   .map((m) => (
@@ -210,7 +263,7 @@ export default function NewCallPage() {
             </label>
             <label className="text-sm">
               STT model
-              <select className={`${field} mt-1`} value={form.stt} onChange={(e) => setForm({ ...form, stt: e.target.value })}>
+              <select className={`${field} mt-1`} value={form.stt} onChange={(e) => change("stt", e.target.value)}>
                 {byKind.stt.map((m) => (
                   <option key={m.key} value={m.key} disabled={!m.implemented}>
                     {m.display_name} ({priceLabel(m)}){m.deprecated ? " · deprecated" : ""}
@@ -220,7 +273,7 @@ export default function NewCallPage() {
             </label>
             <label className="text-sm">
               TTS model
-              <select className={`${field} mt-1`} value={form.tts} onChange={(e) => setForm({ ...form, tts: e.target.value })}>
+              <select className={`${field} mt-1`} value={form.tts} onChange={(e) => change("tts", e.target.value)}>
                 {byKind.tts.map((m) => (
                   <option key={m.key} value={m.key} disabled={!m.implemented}>
                     {m.display_name}
@@ -231,17 +284,13 @@ export default function NewCallPage() {
             </label>
             <label className="text-sm">
               Voice
-              <select className={`${field} mt-1`} value={form.tts_voice} onChange={(e) => setForm({ ...form, tts_voice: e.target.value })}>
+              <select className={`${field} mt-1`} value={form.tts_voice} onChange={(e) => change("tts_voice", e.target.value)}>
                 {catalog?.voices.map((v) => (
                   <option key={v}>{v}</option>
                 ))}
               </select>
             </label>
           </div>
-          <label className="mt-3 block text-sm">
-            Greeting (spoken when the call connects; empty = wait for the caller)
-            <input className={`${field} mt-1`} value={form.greeting} onChange={(e) => setForm({ ...form, greeting: e.target.value })} />
-          </label>
         </Card>
       )}
 

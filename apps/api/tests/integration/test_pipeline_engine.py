@@ -12,7 +12,7 @@ from voice_lab.engines.base import SessionContext
 from voice_lab.engines.pipeline import PipelineEngine
 from voice_lab.integrations.llm.base import LLMChunk
 from voice_lab.modules.calls.schemas import SessionConfig
-from voice_lab.modules.calls.service import resolve_config
+from voice_lab.modules.sessions.config import resolve_config
 from voice_lab.observability.events import EventRecorder
 from voice_lab.persistence.models import Call, CallEvent, ConversationMessage, ConversationSession, UsageEvent
 from voice_lab.usage.recorder import UsageRecorder

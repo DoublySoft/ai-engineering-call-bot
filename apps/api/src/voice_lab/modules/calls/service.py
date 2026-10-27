@@ -2,101 +2,29 @@ import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voice_lab.catalog.pricing import CostResult, CostStatus, calculate_cost
-from voice_lab.catalog.registry import get_model
-from voice_lab.catalog.schemas import BillingDimension, ModelKind
+from voice_lab.catalog.schemas import BillingDimension
 from voice_lab.core.config import Settings
 from voice_lab.core.database import SessionLocal
+from voice_lab.core.errors import LabError
 from voice_lab.core.security import new_stream_token
-from voice_lab.integrations.registry import IMPLEMENTED
 from voice_lab.integrations.telephony.twilio.client import TwilioTelephony, stream_twiml
-from voice_lab.modules.calls.schemas import OutboundCallRequest, SessionConfig
+from voice_lab.modules.agents.service import resolve_session
+from voice_lab.modules.calls.schemas import OutboundCallRequest
+from voice_lab.modules.sessions.config import check_provider_keys, pricing_snapshot
 from voice_lab.observability.events import EventRecorder
-from voice_lab.persistence.models import Call, VoiceAgent, VoiceAgentConfiguration
+from voice_lab.persistence.models import Call
 from voice_lab.usage.recorder import UsageRecorder
 
 logger = logging.getLogger(__name__)
 
 
-class CallError(Exception):
-    def __init__(self, message: str, status_code: int = 400):
-        super().__init__(message)
-        self.status_code = status_code
-
-
-def resolve_config(cfg: SessionConfig, settings: Settings) -> dict[str, Any]:
-    """Fill defaults and reject combinations the lab can't run yet."""
-    resolved = cfg.model_dump()
-    for part in ("stt", "llm", "tts"):
-        resolved[f"{part}_provider"] = resolved[f"{part}_provider"] or getattr(settings, f"{part}_provider")
-        resolved[f"{part}_model"] = resolved[f"{part}_model"] or getattr(settings, f"{part}_model")
-    resolved["tts_voice"] = resolved["tts_voice"] or settings.tts_voice
-    resolved["language"] = resolved["language"] or settings.agent_language
-
-    if resolved["voice_provider"] not in IMPLEMENTED["voice_provider"]:
-        raise CallError(f"voice provider '{resolved['voice_provider']}' is not implemented yet (planned: Phase 7)")
-    if resolved["engine"] not in IMPLEMENTED["engine"]:
-        raise CallError(f"engine '{resolved['engine']}' is not implemented yet (planned: Phase 6)")
-    for part, kind in (("stt", ModelKind.STT), ("llm", ModelKind.LLM), ("tts", ModelKind.TTS)):
-        provider, model = resolved[f"{part}_provider"], resolved[f"{part}_model"]
-        if provider not in IMPLEMENTED[part]:
-            raise CallError(f"{part.upper()} provider '{provider}' is not implemented yet")
-        definition = get_model(provider, model)
-        if definition is None or definition.kind != kind:
-            raise CallError(f"'{provider}:{model}' is not a known {kind.value} model in the catalog")
-    return resolved
-
-
-def pricing_snapshot(config: dict[str, Any]) -> dict[str, Any]:
-    snapshot: dict[str, Any] = {}
-    for part in ("stt", "llm", "tts"):
-        definition = get_model(config[f"{part}_provider"], config[f"{part}_model"])
-        pricing = definition.current_pricing() if definition else None
-        snapshot[part] = pricing.model_dump(mode="json") if pricing else None
-    return snapshot
-
-
-async def ensure_agent_configuration(db: AsyncSession, config: dict[str, Any]) -> VoiceAgentConfiguration:
-    agent = await db.scalar(select(VoiceAgent).where(VoiceAgent.is_default.is_(True)))
-    if agent is None:
-        agent = VoiceAgent(name="default", is_default=True)
-        db.add(agent)
-        await db.flush()
-    settings_json = {k: v for k, v in config.items() if k not in ("voice_provider", "engine")}
-    existing = (
-        await db.scalars(
-            select(VoiceAgentConfiguration)
-            .where(VoiceAgentConfiguration.agent_id == agent.id)
-            .order_by(VoiceAgentConfiguration.version.desc())
-        )
-    ).all()
-    for cfg in existing:
-        if cfg.settings == settings_json and cfg.engine == config["engine"] and cfg.voice_provider == config["voice_provider"]:
-            return cfg
-    cfg = VoiceAgentConfiguration(
-        agent_id=agent.id,
-        version=(existing[0].version + 1) if existing else 1,
-        voice_provider=config["voice_provider"],
-        engine=config["engine"],
-        settings=settings_json,
-    )
-    db.add(cfg)
-    await db.flush()
-    return cfg
-
-
-def check_provider_keys(config: dict[str, Any], settings: Settings) -> None:
-    """Fail before dialing/connecting if a selected provider has no API key."""
-    keys = {"openai": settings.openai_api_key, "anthropic": settings.anthropic_api_key}
-    for part in ("stt", "llm", "tts"):
-        provider = config[f"{part}_provider"]
-        if provider in keys and not keys[provider]:
-            raise CallError(f"{provider.upper()}_API_KEY is not set (needed for {part.upper()})", 503)
+class CallError(LabError):
+    pass
 
 
 def check_outbound_prerequisites(settings: Settings, to: str) -> None:
@@ -110,9 +38,8 @@ def check_outbound_prerequisites(settings: Settings, to: str) -> None:
 
 async def start_outbound_call(db: AsyncSession, request: OutboundCallRequest, settings: Settings, telephony: TwilioTelephony) -> Call:
     check_outbound_prerequisites(settings, request.to)
-    config = resolve_config(request.config, settings)
+    config, agent_cfg = await resolve_session(db, request.config, settings)
     check_provider_keys(config, settings)
-    agent_cfg = await ensure_agent_configuration(db, config)
 
     call = Call(
         direction="outbound",
@@ -129,7 +56,14 @@ async def start_outbound_call(db: AsyncSession, request: OutboundCallRequest, se
     db.add(call)
     await db.commit()
     events = EventRecorder(SessionLocal, call.id)
-    await events.emit("call.created", provider="twilio", direction="outbound", engine=config["engine"], llm_model=config["llm_model"])
+    await events.emit(
+        "call.created",
+        provider="twilio",
+        direction="outbound",
+        engine=config["engine"],
+        llm_model=config["llm_model"],
+        agent=config["agent"]["name"],
+    )
 
     twiml = stream_twiml(
         f"{settings.public_ws_base}/twilio/media",

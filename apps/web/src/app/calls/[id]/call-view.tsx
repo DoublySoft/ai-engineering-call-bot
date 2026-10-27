@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CallDetail, CallEventRow, LiveMessage, Role } from "@voice-lab/shared";
 import { BrowserVoicePanel } from "@/components/browser-voice-panel";
@@ -91,6 +92,7 @@ export function CallView({ id, wsBase }: { id: string; wsBase: string }) {
   if (!detail || !call) return <p className="text-sm text-muted">Loading…</p>;
 
   const cfg = call.config_snapshot;
+  const agentInfo = (call.config_snapshot as unknown as { agent?: { id: string; name: string; version: number } }).agent;
   const elapsed = call.duration_seconds ?? (call.answered_at ? Math.max(0, (new Date(call.ended_at ?? now).getTime() - new Date(call.answered_at).getTime()) / 1000) : null);
   const byOp = detail.cost_by_operation;
   const total = Object.values(byOp).reduce((s, o) => s + Number(o.cost_usd), 0);
@@ -124,6 +126,16 @@ export function CallView({ id, wsBase }: { id: string; wsBase: string }) {
           <dl className="grid grid-cols-2 gap-y-1 text-sm">
             <dt className="text-muted">Duration</dt>
             <dd className="tabular-nums">{duration(elapsed)}</dd>
+            <dt className="text-muted">Agent</dt>
+            <dd>
+              {agentInfo ? (
+                <Link href={`/agents/${agentInfo.id}`} className="text-blue-600 hover:underline">
+                  {agentInfo.name} v{agentInfo.version}
+                </Link>
+              ) : (
+                "—"
+              )}
+            </dd>
             <dt className="text-muted">Engine</dt>
             <dd>{cfg.engine}</dd>
             <dt className="text-muted">Voice provider</dt>
