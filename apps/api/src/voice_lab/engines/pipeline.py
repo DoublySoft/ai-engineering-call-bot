@@ -132,46 +132,38 @@ class PipelineEngine:
             self.ctx.events.push({"type": "transcript", "role": "user", "text": transcript.text, "final": True, "correlation_id": cid})
             self._history.append(ChatMessage("user", transcript.text))
 
-            # ---- LLM (streamed) -> TTS per sentence
-            reply, interrupted = "", True
-            usage: LLMUsage | None = None
-            buffer = ""
-            async with self.ctx.events.span("llm", correlation_id=cid, provider=self.llm.provider, model=llm_model) as res:
-                t0 = time.perf_counter()
-                try:
-                    async for chunk in self.llm.stream(llm_model, self._history, self.cfg.get("max_output_tokens", 300)):
-                        if chunk.usage:
-                            usage = chunk.usage
-                        if not chunk.text:
-                            continue
-                        turn.setdefault("llm_ttft_ms", int((time.perf_counter() - t0) * 1000))
-                        reply += chunk.text
-                        buffer += chunk.text
-                        self.ctx.events.push({"type": "transcript", "role": "agent", "text": reply, "final": False, "correlation_id": cid})
-                        sentences, buffer = split_ready_sentences(buffer)
-                        for sentence in sentences:
-                            await self._speak(sentence, cid, turn, speech_ended_at)
-                    if buffer.strip():
-                        await self._speak(buffer.strip(), cid, turn, speech_ended_at)
-                    interrupted = False
-                finally:
-                    turn["llm_ms"] = int((time.perf_counter() - t0) * 1000)
-                    res["output_chars"] = len(reply)
-                    reply = reply.strip()
-                    if reply:
-                        self._history.append(ChatMessage("assistant", reply))
-                        await self._transcript.add("agent", reply, interrupted=interrupted)
-                        self.ctx.events.push(
-                            {
-                                "type": "transcript",
-                                "role": "agent",
-                                "text": reply,
-                                "final": True,
-                                "interrupted": interrupted,
-                                "correlation_id": cid,
-                            }
-                        )
-                    await self._record_llm(usage, llm_model, turn["llm_ms"], cid)
+            # ---- LLM (streamed) -> TTS per sentence.
+            # The LLM stream is consumed in its own task so llm.* timings measure
+            # only the model, not the speech synthesis running alongside it.
+            sentences: asyncio.Queue[str | None] = asyncio.Queue()
+            llm_state: dict[str, Any] = {"reply": "", "usage": None, "complete": False}
+            producer = asyncio.create_task(self._produce_reply(llm_model, cid, turn, sentences, llm_state))
+            spoken_all = False
+            try:
+                while (sentence := await sentences.get()) is not None:
+                    await self._speak(sentence, cid, turn, speech_ended_at)
+                await producer  # re-raises LLM errors
+                spoken_all = True
+            finally:
+                if not producer.done():
+                    producer.cancel()
+                    await asyncio.gather(producer, return_exceptions=True)
+                interrupted = not (spoken_all and llm_state["complete"])
+                reply = llm_state["reply"].strip()
+                if reply:
+                    self._history.append(ChatMessage("assistant", reply))
+                    await self._transcript.add("agent", reply, interrupted=interrupted)
+                    self.ctx.events.push(
+                        {
+                            "type": "transcript",
+                            "role": "agent",
+                            "text": reply,
+                            "final": True,
+                            "interrupted": interrupted,
+                            "correlation_id": cid,
+                        }
+                    )
+                await self._record_llm(llm_state["usage"], llm_model, turn.get("llm_ms", 0), cid)
             await self._mark(cid)
         except asyncio.CancelledError:
             turn["interrupted"] = True
@@ -182,6 +174,37 @@ class PipelineEngine:
         finally:
             self._turns.append(turn)
             await self._check_spend_limit()
+
+    async def _produce_reply(
+        self, model: str, cid: str, turn: dict[str, Any], sentences: "asyncio.Queue[str | None]", state: dict[str, Any]
+    ) -> None:
+        buffer = ""
+        try:
+            async with self.ctx.events.span("llm", correlation_id=cid, provider=self.llm.provider, model=model) as res:
+                t0 = time.perf_counter()
+                try:
+                    async for chunk in self.llm.stream(model, self._history, self.cfg.get("max_output_tokens", 300)):
+                        if chunk.usage:
+                            state["usage"] = chunk.usage
+                        if not chunk.text:
+                            continue
+                        turn.setdefault("llm_ttft_ms", int((time.perf_counter() - t0) * 1000))
+                        state["reply"] += chunk.text
+                        buffer += chunk.text
+                        self.ctx.events.push(
+                            {"type": "transcript", "role": "agent", "text": state["reply"], "final": False, "correlation_id": cid}
+                        )
+                        ready, buffer = split_ready_sentences(buffer)
+                        for sentence in ready:
+                            sentences.put_nowait(sentence)
+                    if buffer.strip():
+                        sentences.put_nowait(buffer.strip())
+                    state["complete"] = True
+                finally:
+                    turn["llm_ms"] = int((time.perf_counter() - t0) * 1000)
+                    res["output_chars"] = len(state["reply"])
+        finally:
+            sentences.put_nowait(None)  # always unblock the speaker loop
 
     async def _speak_only(self, text: str) -> None:
         cid = uuid.uuid4().hex[:16]
@@ -229,7 +252,10 @@ class PipelineEngine:
     async def _record_stt(self, transcript: Any, latency_ms: int, cid: str) -> None:
         provider, model = self.stt.provider, self.cfg["stt_model"]
         # Audio seconds are measured by us; OpenAI bills the file it receives.
+        # calculate_cost marks the result `estimated` when the catalog price is only
+        # an approximation of the real billing (e.g. token-billed transcription).
         cost = calculate_cost(self._pricing(provider, model), {D.AUDIO_INPUT_SECONDS: transcript.audio_duration_ms / 1000})
+        reported = transcript.provider_usage or {}
         await self.ctx.usage.record(
             provider=provider,
             model=model,
@@ -237,9 +263,11 @@ class PipelineEngine:
             cost=cost,
             usage_source="measured",
             audio_duration_ms=transcript.audio_duration_ms,
+            input_tokens=reported.get("input_tokens"),
+            output_tokens=reported.get("output_tokens"),
             latency_ms=latency_ms,
             correlation_id=cid,
-            details={"provider_usage": transcript.provider_usage} if transcript.provider_usage else {},
+            details={"provider_usage": reported} if reported else {},
         )
 
     async def _record_llm(self, usage: LLMUsage | None, model: str, latency_ms: int, cid: str) -> None:

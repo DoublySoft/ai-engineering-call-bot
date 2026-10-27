@@ -39,7 +39,7 @@ def calculate_cost(
 
     if missing and total == 0:
         return CostResult(None, CostStatus.UNAVAILABLE, pricing.version, tuple(missing))
-    if missing or usage_is_estimated or not pricing.verified:
+    if missing or usage_is_estimated or not pricing.verified or pricing.approximate:
         status = CostStatus.ESTIMATED
     else:
         status = CostStatus.CALCULATED

@@ -61,3 +61,10 @@ def test_current_pricing_picks_latest_effective_version() -> None:
     )
     assert model.current_pricing().version != "future"  # type: ignore[union-attr]
     assert model.current_pricing(date(2099, 6, 1)).version == "future"  # type: ignore[union-attr]
+
+
+def test_approximate_pricing_is_estimated_even_when_verified() -> None:
+    pricing = get_model("openai", "gpt-4o-mini-transcribe").current_pricing()  # type: ignore[union-attr]
+    assert pricing.verified and pricing.approximate  # type: ignore[union-attr]
+    cost = calculate_cost(pricing, {D.AUDIO_INPUT_SECONDS: 60})
+    assert cost.amount_usd == Decimal("0.003") and cost.status == CostStatus.ESTIMATED

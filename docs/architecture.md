@@ -82,7 +82,7 @@ El consumo real vive en `usage_events`, nunca en el catálogo.
 | --- | --- |
 | `provider_reported` | importe dado por el proveedor (Twilio `price`) |
 | `calculated` | consumo medido o reportado × precio verificado |
-| `estimated` | falta alguna dimensión, precio no verificado o consumo estimado |
+| `estimated` | falta alguna dimensión, precio no verificado, consumo estimado o tarifa aproximada (`approximate`, p. ej. el $/min publicado para `gpt-4o-mini-transcribe`, que en realidad se factura por tokens) |
 | `unavailable` | no hay precio o no se puede medir la dimensión facturada (p. ej. tokens de audio de `gpt-4o-mini-tts`) |
 
 `usage_source` distingue `provider_reported` (tokens del LLM), `measured` (segundos de audio enviados a STT,
@@ -99,7 +99,8 @@ Cada evento (`call.created`, `call.ringing`, `call.answered`, `session.started`,
 2. escribe como log JSON (con redacción de claves sensibles);
 3. publica en el hub en memoria → WebSocket `/api/calls/{id}/live`.
 
-Métricas por sesión (`conversation_sessions.metrics`): STT, LLM time-to-first-token y total, TTS first byte,
+Métricas por sesión (`conversation_sessions.metrics`): STT, LLM time-to-first-token y total (el stream
+del LLM se consume en su propia tarea, así que no incluye el tiempo de TTS), TTS first byte,
 **fin de habla → primer audio enviado**. Todas son **medidas en el servidor**; el tiempo de red hasta el
 teléfono y el buffer de Twilio no se ven y por eso se indica `measurement_note`.
 
@@ -118,6 +119,9 @@ en `observability/events.py` (Fase 8) sin tocar los motores.
 - Todos los endpoints `/api/*` exigen `Authorization: Bearer ADMIN_API_TOKEN` (incluidas transcripciones).
   El token sólo lo conoce el servidor de Next; el navegador habla con el proxy `/api/lab/*` (con lista
   blanca de rutas). El WebSocket en vivo usa un token HMAC por llamada derivado del admin token.
+- La propia web está protegida, porque el proxy actúa con el admin token: `LAB_WEB_PASSWORD` activa
+  HTTP Basic en todas las rutas (obligatorio en producción). Sin contraseña, `pnpm dev:web` escucha sólo
+  en `127.0.0.1`.
 - Webhooks de Twilio: firma `X-Twilio-Signature` validada contra `PUBLIC_BASE_URL` + ruta.
 - Media Stream: token aleatorio de un solo uso por llamada, enviado en el `<Parameter>` del TwiML.
 - Outbound sólo a `OUTBOUND_ALLOWLIST`, números E.164. Sin marcación por lotes ni campañas.

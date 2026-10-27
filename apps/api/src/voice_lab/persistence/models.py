@@ -66,6 +66,7 @@ class ModelPricing(Base, Timestamped):
     components: Mapped[list[dict[str, Any]]] = mapped_column(Json)
     source_url: Mapped[str | None] = mapped_column(Text)
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    approximate: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     notes: Mapped[str | None] = mapped_column(Text)
     model: Mapped[AIModel] = relationship(back_populates="pricing")
 

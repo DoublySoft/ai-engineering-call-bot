@@ -28,7 +28,7 @@ OPENAI_PRICING_URL = "https://developers.openai.com/api/docs/pricing"
 VERIFIED_ON = date(2026, 10, 27)
 
 
-def _openai_price(*components: tuple[D, U, str], notes: str | None = None) -> list[PricingVersion]:
+def _openai_price(*components: tuple[D, U, str], notes: str | None = None, approximate: bool = False) -> list[PricingVersion]:
     return [
         PricingVersion(
             version=f"openai-{VERIFIED_ON.isoformat()}",
@@ -36,6 +36,7 @@ def _openai_price(*components: tuple[D, U, str], notes: str | None = None) -> li
             components=[PriceComponent(dimension=d, unit=u, price_usd=Decimal(p)) for d, u, p in components],
             source_url=OPENAI_PRICING_URL,
             verified=True,
+            approximate=approximate,
             notes=notes,
         )
     ]
@@ -82,6 +83,7 @@ CATALOG: list[ModelDefinition] = [
         pricing=_openai_price(
             (D.AUDIO_INPUT_SECONDS, U.USD_PER_MINUTE, "0.003"),
             notes="Per-minute figure is OpenAI's own estimate; token prices are $1.25 in / $5.00 out per 1M.",
+            approximate=True,
         ),
     ),
     # ---- TTS

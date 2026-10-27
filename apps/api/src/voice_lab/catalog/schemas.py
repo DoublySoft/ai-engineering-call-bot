@@ -67,6 +67,10 @@ class PricingVersion(BaseModel):
     components: list[PriceComponent]
     source_url: str | None = None
     verified: bool = Field(description="True only when copied from the provider's official pricing page")
+    approximate: bool = Field(
+        False,
+        description="The provider bills on other dimensions; these components are its published approximation",
+    )
     notes: str | None = None
 
     def component(self, dimension: BillingDimension) -> PriceComponent | None:

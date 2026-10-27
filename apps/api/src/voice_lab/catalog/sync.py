@@ -29,9 +29,12 @@ async def sync_catalog(db: AsyncSession) -> None:
         row.max_output_tokens = definition.max_output_tokens
         row.deprecated = definition.deprecated
         await db.flush()
-        known = set((await db.scalars(select(ModelPricing.version).where(ModelPricing.model_id == row.id))).all())
+        known = {p.version: p for p in (await db.scalars(select(ModelPricing).where(ModelPricing.model_id == row.id))).all()}
         for pricing in definition.pricing:
-            if pricing.version not in known:
+            if pricing.version in known:
+                # Prices are immutable; only the "is this an approximation" flag may be corrected.
+                known[pricing.version].approximate = pricing.approximate
+            else:
                 db.add(
                     ModelPricing(
                         model_id=row.id,
@@ -40,6 +43,7 @@ async def sync_catalog(db: AsyncSession) -> None:
                         components=[c.model_dump(mode="json") for c in pricing.components],
                         source_url=pricing.source_url,
                         verified=pricing.verified,
+                        approximate=pricing.approximate,
                         notes=pricing.notes,
                     )
                 )

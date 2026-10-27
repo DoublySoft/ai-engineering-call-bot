@@ -10,6 +10,7 @@ from voice_lab.core.config import get_settings
 from voice_lab.core.database import SessionLocal
 from voice_lab.engines.base import SessionContext
 from voice_lab.engines.pipeline import PipelineEngine
+from voice_lab.integrations.llm.base import LLMChunk
 from voice_lab.modules.calls.schemas import SessionConfig
 from voice_lab.modules.calls.service import resolve_config
 from voice_lab.observability.events import EventRecorder
@@ -125,3 +126,39 @@ async def test_empty_transcript_skips_llm() -> None:
     await _speak_turn(engine)
     assert llm.seen == []
     await engine.end("test")
+
+
+async def test_llm_timing_excludes_tts() -> None:
+    class SlowTTS(FakeTTS):
+        async def synthesize(self, text, model, voice):  # type: ignore[no-untyped-def]
+            await asyncio.sleep(0.3)
+            yield np.zeros(240, np.int16)
+
+    engine, _, call_id = await _make_engine(tts=SlowTTS())
+    await engine.start()
+    await _speak_turn(engine)
+    await engine.end("test")
+    async with SessionLocal() as db:
+        llm_ms = await db.scalar(select(CallEvent.duration_ms).where(CallEvent.call_id == call_id, CallEvent.name == "llm.completed"))
+        tts_ms = (
+            await db.scalars(select(CallEvent.duration_ms).where(CallEvent.call_id == call_id, CallEvent.name == "tts.completed"))
+        ).all()
+    assert len(tts_ms) == 2 and all(ms >= 300 for ms in tts_ms)
+    assert llm_ms is not None and llm_ms < 200  # two sentences of slow TTS would be >= 600 ms
+
+
+async def test_llm_failure_still_unblocks_turn() -> None:
+    class BrokenLLM(FakeLLM):
+        async def stream(self, model, messages, max_output_tokens):  # type: ignore[no-untyped-def]
+            yield LLMChunk(text="Hola. ")
+            raise RuntimeError("upstream 500")
+
+    engine, _, call_id = await _make_engine(llm=BrokenLLM())
+    await engine.start()
+    await _speak_turn(engine)
+    await engine.end("test")
+    async with SessionLocal() as db:
+        names = (await db.scalars(select(CallEvent.name).where(CallEvent.call_id == call_id))).all()
+        msg = await db.scalar(select(ConversationMessage).join(ConversationSession).where(ConversationSession.call_id == call_id))
+    assert "llm.failed" in names and "turn.failed" in names
+    assert msg is not None and msg.role == "user"
