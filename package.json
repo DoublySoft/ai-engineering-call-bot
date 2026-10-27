@@ -1,0 +1,17 @@
+{
+  "name": "voice-ai-lab",
+  "private": true,
+  "packageManager": "pnpm@10.15.0",
+  "scripts": {
+    "dev:web": "pnpm --filter web dev",
+    "build:web": "pnpm --filter web build",
+    "lint:web": "pnpm --filter web lint",
+    "typecheck": "pnpm -r typecheck",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "cd apps/api && uv run alembic upgrade head",
+    "dev:api": "cd apps/api && uv run uvicorn voice_lab.main:app --reload --port ${API_PORT:-8000}",
+    "test:api": "cd apps/api && uv run pytest",
+    "check:ports": "./scripts/check-ports.sh"
+  }
+}

@@ -1,0 +1,1 @@
+{ "extends": "@voice-lab/config/tsconfig.base.json", "include": ["src"] }
