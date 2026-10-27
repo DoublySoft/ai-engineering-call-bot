@@ -1,4 +1,3 @@
-import asyncio
 import uuid
 from typing import Literal
 
@@ -39,19 +38,28 @@ async def retell_web_call(
     retell: RetellClient = Depends(get_retell),
 ) -> dict:
     try:
-        return await service.start_web_call(db, call_id, retell, settings)
+        web = await service.start_web_call(db, call_id, retell, settings)
     except LabError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
+    # Finalised server-side even if the browser never reports back.
+    service.ensure_watcher(call_id, retell, settings.max_call_duration_seconds)
+    return web
 
 
 @router.post("/{call_id}/retell-sync")
-async def retell_sync(call_id: uuid.UUID, body: SyncRequest | None = None, retell: RetellClient = Depends(get_retell)) -> dict:
+async def retell_sync(
+    call_id: uuid.UUID,
+    body: SyncRequest | None = None,
+    retell: RetellClient = Depends(get_retell),
+    settings: Settings = Depends(get_settings),
+) -> dict:
     transcript = [u.model_dump() for u in body.transcript] if body else None
+    service.remember_browser_transcript(call_id, transcript)
     try:
         result = await service.sync_call(call_id, retell, transcript)
     except LabError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     if not (result["call_status"] in service.ENDED and result["cost_available"]):
-        asyncio.create_task(service.sync_until_costed(call_id, retell, transcript))
+        service.ensure_watcher(call_id, retell, settings.max_call_duration_seconds)
         result["background_sync"] = True
     return result

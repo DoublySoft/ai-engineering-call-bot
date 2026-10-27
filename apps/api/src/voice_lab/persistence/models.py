@@ -10,12 +10,14 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -166,6 +168,10 @@ class ConversationMessage(Base, Timestamped):
 
 class UsageEvent(Base):
     __tablename__ = "usage_events"
+    __table_args__ = (
+        # A managed provider's per-call cost is imported exactly once, even if syncs race.
+        Index("uq_usage_managed_per_call", "call_id", unique=True, postgresql_where=text("operation_type = 'managed'")),
+    )
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=_uuid)
     call_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("calls.id", ondelete="CASCADE"), index=True)
     session_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("conversation_sessions.id", ondelete="CASCADE"))

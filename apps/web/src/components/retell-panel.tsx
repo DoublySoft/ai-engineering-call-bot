@@ -29,19 +29,31 @@ interface WebClient {
 export function RetellPanel({ callId, onChanged }: { callId: string; onChanged: () => void }) {
   const client = useRef<WebClient | null>(null);
   const transcript = useRef<Utterance[]>([]);
+  const started = useRef(false);
+  const synced = useRef(false);
   const [state, setState] = useState<State>("idle");
   const [detail, setDetail] = useState<string>();
   const [live, setLive] = useState<Utterance[]>([]);
 
   useEffect(
     () => () => {
-      client.current?.stopCall();
       client.current?.removeAllListeners();
+      client.current?.stopCall();
+      // Leaving the page mid-call: hand the live transcript to the server. keepalive lets the
+      // request outlive the page; the server also finalises the call on its own regardless.
+      if (started.current && !synced.current) {
+        void fetch(`/api/lab/calls/${callId}/retell-sync`, {
+          method: "POST",
+          body: JSON.stringify({ transcript: transcript.current }),
+          keepalive: true,
+        });
+      }
     },
-    [],
+    [callId],
   );
 
   async function sync() {
+    synced.current = true;
     setState("syncing");
     const res = await fetch(`/api/lab/calls/${callId}/retell-sync`, { method: "POST", body: JSON.stringify({ transcript: transcript.current }) });
     const body = await res.json();
@@ -61,6 +73,7 @@ export function RetellPanel({ callId, onChanged }: { callId: string; onChanged: 
       setDetail(web.detail);
       return;
     }
+    started.current = true;
     const { RetellWebClient } = await import("retell-client-js-sdk");
     const c = new RetellWebClient() as unknown as WebClient;
     client.current = c;

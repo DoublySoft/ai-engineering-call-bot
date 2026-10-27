@@ -210,3 +210,48 @@ async def test_spend_limit_hangs_up() -> None:
     await _drain(conn)
     await engine.end("test")
     assert transport.hangups == ["spend_limit"]
+
+
+async def test_barge_in_after_generation_but_during_playback() -> None:
+    engine, conn, _, transport, call_id = await _engine(greeting=None)
+    await engine.start()
+    for e in [
+        ev("input_audio_buffer.speech_stopped"),
+        ev("response.created"),
+        ev("response.output_audio.delta", delta=_audio(3000), item_id="item_long"),
+        ev("response.output_audio_transcript.done", transcript="Una respuesta larga que aún suena."),
+        ev("response.done", response={"status": "completed", "usage": USAGE}),  # generation done, client still playing
+        ev("input_audio_buffer.speech_started"),  # caller talks over it before the mark comes back
+    ]:
+        conn.events.put_nowait(e)
+    await _drain(conn)
+    assert transport.cleared == 1
+    truncate = [kw for name, kw in conn.sent if name == "conversation.item.truncate"]
+    assert truncate and truncate[0]["item_id"] == "item_long"
+    # a playback mark arriving afterwards is harmless and doesn't re-trigger
+    await engine.on_playback_done(transport.marks[-1])
+    await engine.end("test")
+    async with SessionLocal() as db:
+        msg = await db.scalar(
+            select(ConversationMessage)
+            .join(ConversationSession)
+            .where(ConversationSession.call_id == call_id, ConversationMessage.role == "agent")
+        )
+    assert msg is not None and msg.interrupted is True
+
+
+async def test_no_barge_in_once_playback_finished() -> None:
+    engine, conn, _, transport, _ = await _engine(greeting=None)
+    await engine.start()
+    for e in [
+        ev("response.created"),
+        ev("response.output_audio.delta", delta=_audio(200), item_id="item_s"),
+        ev("response.done", response={"status": "completed", "usage": USAGE}),
+    ]:
+        conn.events.put_nowait(e)
+    await _drain(conn)
+    await engine.on_playback_done(transport.marks[-1])  # client finished playing
+    conn.events.put_nowait(ev("input_audio_buffer.speech_started"))
+    await _drain(conn)
+    await engine.end("test")
+    assert transport.cleared == 0

@@ -17,6 +17,7 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from voice_lab.catalog.pricing import CostResult, CostStatus
@@ -33,6 +34,12 @@ from voice_lab.usage.recorder import UsageRecorder
 logger = logging.getLogger(__name__)
 PROVIDER = "retell"
 ENDED = {"ended", "error", "not_connected"}
+WATCH_INTERVAL_S = 15
+WATCH_GRACE_S = 300  # after the max call duration, for Retell to finalise cost
+
+# One watcher per call in this process, plus the latest transcript the browser sent.
+_watchers: dict[uuid.UUID, asyncio.Task[None]] = {}
+_browser_transcripts: dict[uuid.UUID, list[dict[str, str]]] = {}
 
 
 def retell_spec(config: dict[str, Any], settings: Settings) -> dict[str, Any]:
@@ -187,31 +194,56 @@ async def sync_call(call_id: uuid.UUID, client: RetellClient, client_transcript:
         final_cost = status in ENDED and cost and cost.get("combined_cost") is not None
         if final_cost and not already:
             usage = UsageRecorder(SessionLocal, events)
-            await usage.record(
-                provider=PROVIDER,
-                model="retell-web-call",
-                operation_type="managed",
-                cost=CostResult(Decimal(str(cost["combined_cost"])) / 100, CostStatus.PROVIDER_REPORTED, "retell-call-cost"),
-                usage_source="provider_reported",
-                audio_duration_ms=int(cost.get("total_duration_seconds", 0) * 1000),
-                details={
-                    "product_costs_cents": cost.get("product_costs"),
-                    "llm_token_usage": data.get("llm_token_usage"),
-                    "note": "Combined Retell cost (STT+LLM+TTS+platform). Components are not billed separately.",
-                },
-            )
+            try:
+                await _record_managed_cost(usage, cost, data)
+            except IntegrityError:
+                logger.info("retell cost for %s already imported by a concurrent sync", call_id)
         return {"call_status": status, "cost_available": bool(final_cost), "transcript_source": source if utterances else None}
 
 
-async def sync_until_costed(
-    call_id: uuid.UUID, client: RetellClient, client_transcript: list[dict[str, str]] | None, attempts: int = 8, delay_s: float = 5
-) -> None:
-    """Retell finalises cost shortly after a call ends; retry briefly in the background."""
-    for attempt in range(attempts):
-        try:
-            result = await sync_call(call_id, client, client_transcript)
-            if result["call_status"] in ENDED and result["cost_available"]:
-                return
-        except Exception:
-            logger.warning("retell sync failed (attempt %s)", attempt + 1, exc_info=True)
-        await asyncio.sleep(delay_s)
+async def _record_managed_cost(usage: UsageRecorder, cost: dict[str, Any], data: dict[str, Any]) -> None:
+    # The partial unique index uq_usage_managed_per_call makes this insert-once.
+    await usage.record(
+        provider=PROVIDER,
+        model="retell-web-call",
+        operation_type="managed",
+        cost=CostResult(Decimal(str(cost["combined_cost"])) / 100, CostStatus.PROVIDER_REPORTED, "retell-call-cost"),
+        usage_source="provider_reported",
+        audio_duration_ms=int(cost.get("total_duration_seconds", 0) * 1000),
+        details={
+            "product_costs_cents": cost.get("product_costs"),
+            "llm_token_usage": data.get("llm_token_usage"),
+            "note": "Combined Retell cost (STT+LLM+TTS+platform). Components are not billed separately.",
+        },
+    )
+
+
+def remember_browser_transcript(call_id: uuid.UUID, transcript: list[dict[str, str]] | None) -> None:
+    if transcript:
+        _browser_transcripts[call_id] = transcript
+
+
+def ensure_watcher(call_id: uuid.UUID, client: RetellClient, max_call_s: int) -> None:
+    """Finalise the call server-side even if the browser never reports back (tab closed,
+    navigation). Idempotent: one watcher per call in this process."""
+    task = _watchers.get(call_id)
+    if task and not task.done():
+        return
+    _watchers[call_id] = asyncio.create_task(_watch(call_id, client, max_call_s))
+
+
+async def _watch(call_id: uuid.UUID, client: RetellClient, max_call_s: int) -> None:
+    deadline = asyncio.get_running_loop().time() + max_call_s + WATCH_GRACE_S
+    try:
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                result = await sync_call(call_id, client, _browser_transcripts.get(call_id))
+                if result["call_status"] in ENDED and result["cost_available"]:
+                    return
+            except Exception:
+                logger.warning("retell sync failed for %s", call_id, exc_info=True)
+            await asyncio.sleep(WATCH_INTERVAL_S)
+        logger.warning("gave up waiting for Retell to finalise %s", call_id)
+    finally:
+        _watchers.pop(call_id, None)
+        _browser_transcripts.pop(call_id, None)

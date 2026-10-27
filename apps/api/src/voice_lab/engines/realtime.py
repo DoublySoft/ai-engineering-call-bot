@@ -81,6 +81,9 @@ class RealtimeEngine:
         self._interrupted = False
         self._response_active = False
         self._otel_span: Any = None
+        # The last finished response whose audio may still be playing on the client.
+        # Generation often ends long before playback; interruption must still work.
+        self._playback: dict[str, Any] | None = None
         self._turns: list[dict[str, Any]] = []
         self._turn: dict[str, Any] = {}
 
@@ -141,6 +144,8 @@ class RealtimeEngine:
         await self.conn.input_audio_buffer.append(audio=base64.b64encode(pcm).decode())
 
     async def on_playback_done(self, label: str) -> None:
+        if self._playback and self._playback["cid"] == label:
+            self._playback = None
         if label in self._pending_marks:
             self._pending_marks.discard(label)
             await self.ctx.events.emit("audio.playback.completed", correlation_id=label)
@@ -167,8 +172,15 @@ class RealtimeEngine:
         kind = _get(event, "type")
         if kind == "input_audio_buffer.speech_started":
             await self.ctx.events.emit("speech.started", provider="openai")
-            if self._first_audio_at is not None and self._item_id:
-                await self._barge_in()
+            if self._first_audio_at is not None and self._item_id:  # still generating and playing
+                await self._barge_in(self._item_id, self._first_audio_at, self._audio_sent_ms, self._cid)
+                self._interrupted = True
+                self._first_audio_at = None
+            elif self._playback:  # generation done, client still playing it
+                pb, self._playback = self._playback, None
+                await self._barge_in(pb["item_id"], pb["first_audio_at"], pb["audio_ms"], pb["cid"])
+                if pb.get("seq"):
+                    await self._transcript.mark_interrupted(pb["seq"])
         elif kind == "input_audio_buffer.speech_stopped":
             self._speech_stopped_at = time.perf_counter()
             self._new_turn()
@@ -221,17 +233,16 @@ class RealtimeEngine:
             if code != "response_cancel_not_active":  # benign race when the user interrupts
                 await self.ctx.events.emit("s2s.error", provider="openai", code=code, message=str(_get(event, "error", "message"))[:300])
 
-    async def _barge_in(self) -> None:
-        played_ms = min(self._audio_sent_ms, int((time.perf_counter() - (self._first_audio_at or 0)) * 1000))
+    async def _barge_in(self, item_id: str, first_audio_at: float, audio_ms: int, cid: str | None) -> None:
+        """Stop client playback and drop the unheard part of `item_id` from the model's context."""
+        played_ms = min(audio_ms, int((time.perf_counter() - first_audio_at) * 1000))
         await self.ctx.transport.clear_audio()
         self._pending_marks.clear()
-        try:  # the server already cancelled the response; drop the unplayed audio from context
-            await self.conn.conversation.item.truncate(item_id=self._item_id, content_index=0, audio_end_ms=played_ms)
+        try:  # an in-progress response was already cancelled by server VAD; a finished one just gets truncated
+            await self.conn.conversation.item.truncate(item_id=item_id, content_index=0, audio_end_ms=played_ms)
         except Exception:
             logger.debug("truncate failed", exc_info=True)
-        self._interrupted = True
-        self._first_audio_at = None
-        await self.ctx.events.emit("agent.interrupted", correlation_id=self._cid, played_ms=played_ms)
+        await self.ctx.events.emit("agent.interrupted", correlation_id=cid, played_ms=played_ms)
 
     async def _response_done(self, response: Any) -> None:
         if not self._response_active:
@@ -251,8 +262,9 @@ class RealtimeEngine:
         text = self._agent_text.strip().strip("«»\"'“”").strip()
         self._agent_text = ""
         interrupted = self._interrupted or status == "cancelled"
+        seq = None
         if text:
-            await self._transcript.add("agent", text, interrupted=interrupted)
+            seq = await self._transcript.add("agent", text, interrupted=interrupted)
             self.ctx.events.push(
                 {
                     "type": "transcript",
@@ -267,7 +279,14 @@ class RealtimeEngine:
             "s2s.completed", correlation_id=self._cid, provider="openai", model=self.cfg["s2s_model"], duration_ms=duration, status=status
         )
         await self._record_s2s(_get(response, "usage"), duration)
-        if self._first_audio_at is not None and self._cid:
+        if self._first_audio_at is not None and self._cid and self._item_id:
+            self._playback = {
+                "cid": self._cid,
+                "item_id": self._item_id,
+                "first_audio_at": self._first_audio_at,
+                "audio_ms": self._audio_sent_ms,
+                "seq": seq,
+            }
             self._pending_marks.add(self._cid)
             await self.ctx.transport.flush_marker(self._cid)
         self._turns.append(self._turn)

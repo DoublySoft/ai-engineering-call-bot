@@ -152,3 +152,48 @@ async def test_guards() -> None:
     with pytest.raises(LabError, match="doesn't use Retell"):
         await _start(fake, pipeline_id)
     await asyncio.sleep(0)
+
+
+async def _ended(fake: FakeRetell) -> uuid.UUID:
+    call_id = await _session()
+    web = await _start(fake, call_id)
+    fake.calls[web["call_id"]] = {
+        "call_status": "ended",
+        "duration_ms": 30_000,
+        "call_cost": {"combined_cost": 7, "total_duration_seconds": 30},
+    }
+    return call_id
+
+
+async def test_concurrent_syncs_import_cost_once() -> None:
+    fake = FakeRetell()
+    call_id = await _ended(fake)
+    results = await asyncio.gather(*(service.sync_call(call_id, _client(fake)) for _ in range(5)), return_exceptions=True)
+    assert not [r for r in results if isinstance(r, Exception)]
+    async with SessionLocal() as db:
+        managed = (await db.scalars(select(UsageEvent).where(UsageEvent.call_id == call_id, UsageEvent.operation_type == "managed"))).all()
+    assert len(managed) == 1 and str(managed[0].cost_usd) == "0.07000000"
+
+
+async def test_watcher_finalises_without_the_browser(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(service, "WATCH_INTERVAL_S", 0.01)
+    fake = FakeRetell()
+    call_id = await _session()
+    web = await _start(fake, call_id)
+    client = _client(fake)
+    service.remember_browser_transcript(call_id, [{"role": "user", "content": "Hola"}])
+    service.ensure_watcher(call_id, client, max_call_s=5)
+    task = service._watchers[call_id]
+    service.ensure_watcher(call_id, client, max_call_s=5)
+    assert service._watchers[call_id] is task  # one watcher per call
+    await asyncio.sleep(0.05)  # call still ongoing: watcher keeps polling
+    assert not task.done()
+    fake.calls[web["call_id"]] = {"call_status": "ended", "duration_ms": 1000, "call_cost": {"combined_cost": 2}}
+    await asyncio.wait_for(task, timeout=2)
+    async with SessionLocal() as db:
+        call = await db.get(Call, call_id)
+        roles = (
+            await db.scalars(select(ConversationMessage.role).join(ConversationSession).where(ConversationSession.call_id == call_id))
+        ).all()
+    assert call.status == "completed" and roles == ["user"]  # browser transcript kept for the watcher
+    assert call_id not in service._watchers
